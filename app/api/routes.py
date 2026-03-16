@@ -14,7 +14,10 @@ from app.schemas.usage import (
     ElectricityUsageHistoryResponse,
     ElectricityUsageMonthSummaryRead,
     ElectricityUsageMonthSummaryResponse,
+    ElectricityUsagePointRead,
     ElectricityUsageRecordRead,
+    ElectricityUsageSummaryRead,
+    ElectricityUsageTimeSeriesResponse,
 )
 from app.services.billing_service import BillingService
 from app.services.electricity_usage_service import ElectricityUsageService
@@ -93,6 +96,51 @@ def get_electricity_usage_months(
     return ElectricityUsageMonthSummaryResponse(
         items=[ElectricityUsageMonthSummaryRead.model_validate(item) for item in items]
     )
+
+
+@router.get("/api/usage/electricity/timeseries", response_model=ElectricityUsageTimeSeriesResponse)
+def get_electricity_usage_timeseries(
+    billing_month: str = Query(...),
+    provider_name: str = Query(default="hepco_electricity"),
+    account_id: str | None = Query(default=None),
+    usage_service: ElectricityUsageService = Depends(get_electricity_usage_service),
+) -> ElectricityUsageTimeSeriesResponse:
+    items = usage_service.get_time_series(
+        provider_name=provider_name,
+        billing_month=billing_month,
+        account_id=account_id,
+    )
+    if not items:
+        raise HTTPException(status_code=404, detail="Electricity usage timeseries not found.")
+    return ElectricityUsageTimeSeriesResponse(
+        provider_name=provider_name,
+        account_id=account_id or items[0].account_id,
+        billing_month=billing_month,
+        points=[
+            ElectricityUsagePointRead(
+                measured_at=item.measured_at,
+                usage_kwh=item.usage_kwh,
+            )
+            for item in items
+        ],
+    )
+
+
+@router.get("/api/usage/electricity/summary", response_model=ElectricityUsageSummaryRead)
+def get_electricity_usage_summary(
+    billing_month: str = Query(...),
+    provider_name: str = Query(default="hepco_electricity"),
+    account_id: str | None = Query(default=None),
+    usage_service: ElectricityUsageService = Depends(get_electricity_usage_service),
+) -> ElectricityUsageSummaryRead:
+    item = usage_service.get_usage_summary(
+        provider_name=provider_name,
+        billing_month=billing_month,
+        account_id=account_id,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Electricity usage summary not found.")
+    return ElectricityUsageSummaryRead.model_validate(item)
 
 
 @router.get("/api/usage/electricity/csv")

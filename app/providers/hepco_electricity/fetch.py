@@ -98,20 +98,25 @@ class HepcoPageFetcher(Fetcher):
         provider_dir: Path,
         timestamp: str,
     ) -> list[dict[str, str | None]]:
-        page.wait_for_selector("#Electric_SelectedHistoryIndex")
+        self._wait_for_billing_page_ready(page)
         option_values = page.eval_on_selector_all(
             "#Electric_SelectedHistoryIndex option",
             "(options) => options.map((option) => ({ value: option.value, label: option.textContent?.trim() || '' }))",
         )
+        current_value = page.locator("#Electric_SelectedHistoryIndex").input_value()
 
         csv_dir = provider_dir / "csv"
         csv_dir.mkdir(parents=True, exist_ok=True)
         pages: list[dict[str, str | None]] = []
         for option in option_values:
             value = str(option["value"])
-            page.select_option("#Electric_SelectedHistoryIndex", value=value)
-            page.wait_for_load_state("domcontentloaded")
-            page.wait_for_load_state("networkidle")
+            if value != current_value:
+                with page.expect_navigation(wait_until="domcontentloaded"):
+                    page.select_option("#Electric_SelectedHistoryIndex", value=value)
+                self._wait_for_billing_page_ready(page)
+                current_value = value
+            else:
+                self._wait_for_billing_page_ready(page)
             page_html = page.content()
             page_path = provider_dir / f"billing_page_{value}_{timestamp}.html"
             page_path.write_text(page_html, encoding="utf-8")
@@ -152,3 +157,9 @@ class HepcoPageFetcher(Fetcher):
             )
         destination.write_bytes(response.body())
         return destination
+
+    def _wait_for_billing_page_ready(self, page: Page) -> None:
+        page.wait_for_selector("#Electric_SelectedHistoryIndex")
+        page.wait_for_load_state("domcontentloaded")
+        page.wait_for_load_state("networkidle")
+        page.wait_for_function("() => document.readyState === 'complete'")

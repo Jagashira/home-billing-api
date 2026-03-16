@@ -89,3 +89,54 @@ class ElectricityUsageService:
             query = query.where(ElectricityUsageRecord.account_id == account_id)
         query = query.order_by(desc(ElectricityUsageRecord.measured_at)).limit(1)
         return self._db.scalar(query)
+
+    def get_time_series(
+        self,
+        provider_name: str,
+        billing_month: str,
+        account_id: str | None = None,
+    ) -> list[ElectricityUsageRecord]:
+        query = select(ElectricityUsageRecord).where(
+            ElectricityUsageRecord.provider_name == provider_name,
+            ElectricityUsageRecord.billing_month == billing_month,
+        )
+        if account_id:
+            query = query.where(ElectricityUsageRecord.account_id == account_id)
+        query = query.order_by(ElectricityUsageRecord.measured_at.asc())
+        return list(self._db.scalars(query).all())
+
+    def get_usage_summary(
+        self,
+        provider_name: str,
+        billing_month: str,
+        account_id: str | None = None,
+    ) -> dict[str, object] | None:
+        query = select(
+            func.count(ElectricityUsageRecord.id).label("point_count"),
+            func.sum(ElectricityUsageRecord.usage_kwh).label("total_usage_kwh"),
+            func.avg(ElectricityUsageRecord.usage_kwh).label("average_usage_kwh"),
+            func.min(ElectricityUsageRecord.usage_kwh).label("min_usage_kwh"),
+            func.max(ElectricityUsageRecord.usage_kwh).label("max_usage_kwh"),
+            func.min(ElectricityUsageRecord.measured_at).label("first_measured_at"),
+            func.max(ElectricityUsageRecord.measured_at).label("last_measured_at"),
+        ).where(
+            ElectricityUsageRecord.provider_name == provider_name,
+            ElectricityUsageRecord.billing_month == billing_month,
+        )
+        if account_id:
+            query = query.where(ElectricityUsageRecord.account_id == account_id)
+        row = self._db.execute(query).one()
+        if row.point_count == 0:
+            return None
+        return {
+            "provider_name": provider_name,
+            "account_id": account_id,
+            "billing_month": billing_month,
+            "point_count": row.point_count,
+            "total_usage_kwh": float(row.total_usage_kwh or 0),
+            "average_usage_kwh": float(row.average_usage_kwh or 0),
+            "min_usage_kwh": float(row.min_usage_kwh) if row.min_usage_kwh is not None else None,
+            "max_usage_kwh": float(row.max_usage_kwh) if row.max_usage_kwh is not None else None,
+            "first_measured_at": row.first_measured_at,
+            "last_measured_at": row.last_measured_at,
+        }

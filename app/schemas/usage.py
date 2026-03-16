@@ -35,3 +35,28 @@ class ElectricityUsageMonthSummaryRead(BaseModel):
 
 class ElectricityUsageMonthSummaryResponse(BaseModel):
     items: list[ElectricityUsageMonthSummaryRead]
+
+
+class ElectricityUsagePointRead(BaseModel):
+    measured_at: datetime
+    usage_kwh: float
+
+
+class ElectricityUsageTimeSeriesResponse(BaseModel):
+    provider_name: str
+    account_id: str | None
+    billing_month: str
+    points: list[ElectricityUsagePointRead]
+
+
+class ElectricityUsageSummaryRead(BaseModel):
+    provider_name: str
+    account_id: str | None
+    billing_month: str
+    point_count: int
+    total_usage_kwh: float
+    average_usage_kwh: float
+    min_usage_kwh: float | None
+    max_usage_kwh: float | None
+    first_measured_at: datetime | None
+    last_measured_at: datetime | None
