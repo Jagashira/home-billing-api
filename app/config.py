@@ -22,6 +22,10 @@ class Settings:
     softbank_password: str
     softbank_login_url: str
     softbank_target_url: str
+    hepco_login_id: str
+    hepco_password: str
+    hepco_login_url: str
+    hepco_target_url: str
     logs_dir: Path
     snapshots_dir: Path
     data_dir: Path
@@ -53,6 +57,13 @@ def get_settings() -> Settings:
             "https://bbss.softbankbb.co.jp/AUT/ftth?mem=memCertAFsd&.func=myPage",
         ),
         softbank_target_url=os.getenv("SOFTBANK_TARGET_URL", ""),
+        hepco_login_id=os.getenv("HEPCO_LOGIN_ID", ""),
+        hepco_password=os.getenv("HEPCO_PASSWORD", ""),
+        hepco_login_url=os.getenv("HEPCO_LOGIN_URL", "https://www.epower-portal.com/hepco"),
+        hepco_target_url=os.getenv(
+            "HEPCO_TARGET_URL",
+            "https://www.epower-portal.com/hepco/mypage/usages/billinginfo/",
+        ),
         logs_dir=logs_dir,
         snapshots_dir=snapshots_dir,
         data_dir=data_dir,
