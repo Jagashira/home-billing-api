@@ -259,6 +259,9 @@ class HepcoBillingParser(Parser):
         tall_format_records = self._parse_tall_csv(rows, billing_month, csv_path, source_url)
         if tall_format_records:
             return tall_format_records
+        matrix_format_records = self._parse_matrix_csv(rows, billing_month, csv_path, source_url)
+        if matrix_format_records:
+            return matrix_format_records
         return self._parse_wide_csv(rows, billing_month, csv_path, source_url)
 
     def _decode_csv(self, payload: bytes) -> str:
@@ -339,6 +342,84 @@ class HepcoBillingParser(Parser):
                     continue
                 measured_at = self._parse_datetime(date_value, time_label)
                 usage_kwh = self._parse_usage_value(row[index])
+                if measured_at is None or usage_kwh is None:
+                    continue
+                records.append(
+                    ElectricityUsageRecordItem(
+                        billing_month=billing_month,
+                        measured_at=measured_at,
+                        usage_kwh=usage_kwh,
+                        csv_path=csv_path,
+                        source_url=source_url,
+                    )
+                )
+        return records
+
+    def _parse_matrix_csv(
+        self,
+        rows: list[list[str]],
+        billing_month: str,
+        csv_path: str,
+        source_url: str | None,
+    ) -> list[ElectricityUsageRecordItem]:
+        if len(rows) < 9:
+            return []
+
+        year_row = rows[4]
+        month_row = rows[5]
+        day_row = rows[6]
+
+        if not year_row or not month_row or not day_row:
+            return []
+        if not year_row[0].strip().startswith("年"):
+            return []
+        if not month_row[0].strip().startswith("月"):
+            return []
+        if not day_row[0].strip().startswith("日"):
+            return []
+
+        date_columns: list[tuple[int, str]] = []
+        current_year: int | None = None
+        current_month: int | None = None
+        last_data_column = max(1, len(day_row) - 2)
+
+        for index in range(1, last_data_column):
+            year_value = year_row[index].strip() if index < len(year_row) else ""
+            month_value = month_row[index].strip() if index < len(month_row) else ""
+            day_value = day_row[index].strip() if index < len(day_row) else ""
+
+            if year_value:
+                year_match = re.search(r"(\d{4})", year_value)
+                if year_match:
+                    current_year = int(year_match.group(1))
+            if month_value:
+                month_match = re.search(r"(\d{1,2})", month_value)
+                if month_match:
+                    current_month = int(month_match.group(1))
+            if current_year is None or current_month is None:
+                continue
+            if not day_value.isdigit():
+                continue
+
+            date_columns.append((index, f"{current_year:04d}/{current_month:02d}/{int(day_value):02d}"))
+
+        if not date_columns:
+            return []
+
+        records: list[ElectricityUsageRecordItem] = []
+        for row in rows[8:]:
+            if not row:
+                continue
+            slot = row[0].strip()
+            if not re.fullmatch(r"\d{2}:\d{2}-\d{2}:\d{2}", slot):
+                continue
+
+            start_time, _, _ = slot.partition("-")
+            for column_index, date_value in date_columns:
+                if column_index >= len(row):
+                    continue
+                measured_at = self._parse_datetime(date_value, start_time)
+                usage_kwh = self._parse_usage_value(row[column_index])
                 if measured_at is None or usage_kwh is None:
                     continue
                 records.append(

@@ -12,6 +12,8 @@ NEXT_PUBLIC_HOME_BILLING_API_URL=http://192.168.11.12:8000
 
 ```ts
 import {
+  fetchElectricityUsageDaily,
+  fetchElectricityUsageHourly,
   fetchElectricityUsageSummary,
   fetchElectricityUsageTimeSeries,
   fetchElectricityUsageMonths,
@@ -33,6 +35,16 @@ if (latestMonth) {
     providerName: "hepco_electricity",
     billingMonth: latestMonth,
   });
+
+  const daily = await fetchElectricityUsageDaily({
+    providerName: "hepco_electricity",
+    billingMonth: latestMonth,
+  });
+
+  const hourly = await fetchElectricityUsageHourly({
+    providerName: "hepco_electricity",
+    billingMonth: latestMonth,
+  });
 }
 ```
 
@@ -41,6 +53,8 @@ if (latestMonth) {
 - 月一覧: `fetchElectricityUsageMonths`
 - 上部サマリーカード: `fetchElectricityUsageSummary`
 - 折れ線グラフ: `fetchElectricityUsageTimeSeries`
+- 日別棒グラフ: `fetchElectricityUsageDaily`
+- 時間帯別棒グラフ: `fetchElectricityUsageHourly`
 - CSV ダウンロードリンク: `buildElectricityUsageCsvUrl`
 - SoftBank 手動取得ボタン: `runSoftbankInternetFetch`
 - HEPCO 手動取得ボタン: `runHepcoElectricityFetch`

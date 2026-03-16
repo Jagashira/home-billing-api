@@ -11,7 +11,11 @@ from app.schemas.billing import BillingHistoryResponse, BillingRecordRead
 from app.schemas.fetch import BillingSummaryItemRead, FetchExecutionResponse, FetchStatusRead, UsageFileRead
 from app.schemas.provider import ProviderInfo
 from app.schemas.usage import (
+    ElectricityUsageDailyPointRead,
+    ElectricityUsageDailyResponse,
     ElectricityUsageHistoryResponse,
+    ElectricityUsageHourlyPointRead,
+    ElectricityUsageHourlyResponse,
     ElectricityUsageMonthSummaryRead,
     ElectricityUsageMonthSummaryResponse,
     ElectricityUsagePointRead,
@@ -141,6 +145,50 @@ def get_electricity_usage_summary(
     if item is None:
         raise HTTPException(status_code=404, detail="Electricity usage summary not found.")
     return ElectricityUsageSummaryRead.model_validate(item)
+
+
+@router.get("/api/usage/electricity/daily", response_model=ElectricityUsageDailyResponse)
+def get_electricity_usage_daily(
+    billing_month: str = Query(...),
+    provider_name: str = Query(default="hepco_electricity"),
+    account_id: str | None = Query(default=None),
+    usage_service: ElectricityUsageService = Depends(get_electricity_usage_service),
+) -> ElectricityUsageDailyResponse:
+    items = usage_service.get_daily_usage(
+        provider_name=provider_name,
+        billing_month=billing_month,
+        account_id=account_id,
+    )
+    if not items:
+        raise HTTPException(status_code=404, detail="Electricity daily usage not found.")
+    return ElectricityUsageDailyResponse(
+        provider_name=provider_name,
+        account_id=account_id,
+        billing_month=billing_month,
+        days=[ElectricityUsageDailyPointRead.model_validate(item) for item in items],
+    )
+
+
+@router.get("/api/usage/electricity/hourly", response_model=ElectricityUsageHourlyResponse)
+def get_electricity_usage_hourly(
+    billing_month: str = Query(...),
+    provider_name: str = Query(default="hepco_electricity"),
+    account_id: str | None = Query(default=None),
+    usage_service: ElectricityUsageService = Depends(get_electricity_usage_service),
+) -> ElectricityUsageHourlyResponse:
+    items = usage_service.get_hourly_usage(
+        provider_name=provider_name,
+        billing_month=billing_month,
+        account_id=account_id,
+    )
+    if not items:
+        raise HTTPException(status_code=404, detail="Electricity hourly usage not found.")
+    return ElectricityUsageHourlyResponse(
+        provider_name=provider_name,
+        account_id=account_id,
+        billing_month=billing_month,
+        hours=[ElectricityUsageHourlyPointRead.model_validate(item) for item in items],
+    )
 
 
 @router.get("/api/usage/electricity/csv")

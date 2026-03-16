@@ -133,6 +133,78 @@ def test_parser_supports_wide_csv_format(tmp_path: Path) -> None:
     assert result.usage_records[0].usage_kwh == 0.52
 
 
+def test_parser_supports_hepco_matrix_csv_format(tmp_path: Path) -> None:
+    parser = HepcoBillingParser()
+    csv_path = tmp_path / "hepco_matrix.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                ",30 分 電 力 量",
+                "お客さま名　：,江頭　慧 (6210010158060)",
+                "抽出期間　：,2026年01月20日 ～ 2026年02月19日",
+                ",,,,,(単位：kWh)",
+                "年,2026年,,,,,合計,平均",
+                "月,1月,,,2月",
+                "日,20,21,22,1,2,合計,平均",
+                ",火曜日,水曜日,木曜日,日曜日,月曜日,,",
+                "00:00-00:30,0.2,0.3,0.0,0.4,0.5,1.4,0.28",
+                "00:30-01:00,0.1,0.2,0.1,0.3,0.4,1.1,0.22",
+            ]
+        ),
+        encoding="cp932",
+    )
+    html = """
+    <html>
+      <body>
+        <select id="Electric_SelectedIndex">
+          <option selected="selected">621-001-015806-0  江頭 慧 千葉県野田市山崎</option>
+        </select>
+        <table class="table table-bordered billing-info-table">
+          <tr>
+            <th>ご請求年月</th>
+            <td class="text-center">
+              <select id="Electric_SelectedHistoryIndex">
+                <option selected="selected" value="202602">2026年2月分</option>
+              </select>
+            </td>
+            <th>お支払い方法</th>
+            <td class="text-center"><span class="fts-18">口振（銀行）・クレカ</span></td>
+          </tr>
+          <tr>
+            <th>ご請求合計金額</th>
+            <td colspan="3" class="text-right"><span class="amount">6,100</span></td>
+          </tr>
+        </table>
+      </body>
+    </html>
+    """
+    result = parser.parse(
+        ProviderFetchPayload(
+            html=html,
+            source_url="https://www.epower-portal.com/hepco/mypage/usages/billinginfo/",
+            html_snapshot_path=None,
+            screenshot_path=None,
+            auxiliary_data={
+                "billing_pages": [
+                    {
+                        "billing_month": "2026年2月分",
+                        "source_url": "https://www.epower-portal.com/hepco/mypage/usages/billinginfo/",
+                        "html": html,
+                        "csv_url": "https://example.com/billing.csv",
+                        "csv_path": str(csv_path),
+                        "pdf_url": None,
+                    }
+                ]
+            },
+        )
+    )
+    assert len(result.usage_records or []) == 10
+    assert result.usage_records[0].measured_at.isoformat() == "2026-01-20T00:00:00"
+    assert result.usage_records[4].measured_at.isoformat() == "2026-02-02T00:00:00"
+    assert result.usage_records[5].measured_at.isoformat() == "2026-01-20T00:30:00"
+    assert result.usage_records[0].usage_kwh == 0.2
+
+
 def test_parser_raises_clear_error_when_contract_selector_missing() -> None:
     parser = HepcoBillingParser()
     html = """

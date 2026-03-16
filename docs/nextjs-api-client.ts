@@ -138,6 +138,31 @@ export type ElectricityUsageSummary = {
   last_measured_at: string | null;
 };
 
+export type ElectricityUsageDailyPoint = {
+  date: string;
+  usage_kwh: number;
+};
+
+export type ElectricityUsageDailyResponse = {
+  provider_name: string;
+  account_id: string | null;
+  billing_month: string;
+  days: ElectricityUsageDailyPoint[];
+};
+
+export type ElectricityUsageHourlyPoint = {
+  slot: string;
+  usage_kwh: number;
+  average_usage_kwh: number;
+};
+
+export type ElectricityUsageHourlyResponse = {
+  provider_name: string;
+  account_id: string | null;
+  billing_month: string;
+  hours: ElectricityUsageHourlyPoint[];
+};
+
 type RequestOptions = {
   baseUrl?: string;
   init?: RequestInit;
@@ -284,6 +309,28 @@ export async function fetchElectricityUsageSummary(
   options?: RequestOptions,
 ): Promise<ElectricityUsageSummary> {
   return getJson("/api/usage/electricity/summary", options, {
+    provider_name: params.providerName,
+    account_id: params.accountId,
+    billing_month: params.billingMonth,
+  });
+}
+
+export async function fetchElectricityUsageDaily(
+  params: UsageQuery & { billingMonth: string },
+  options?: RequestOptions,
+): Promise<ElectricityUsageDailyResponse> {
+  return getJson("/api/usage/electricity/daily", options, {
+    provider_name: params.providerName,
+    account_id: params.accountId,
+    billing_month: params.billingMonth,
+  });
+}
+
+export async function fetchElectricityUsageHourly(
+  params: UsageQuery & { billingMonth: string },
+  options?: RequestOptions,
+): Promise<ElectricityUsageHourlyResponse> {
+  return getJson("/api/usage/electricity/hourly", options, {
     provider_name: params.providerName,
     account_id: params.accountId,
     billing_month: params.billingMonth,

@@ -3,6 +3,10 @@ from app.schemas.fetch import FetchExecutionResponse, FetchStatusRead
 from app.schemas.provider import ProviderInfo
 from app.schemas.usage import (
     ElectricityUsageHistoryResponse,
+    ElectricityUsageDailyPointRead,
+    ElectricityUsageDailyResponse,
+    ElectricityUsageHourlyPointRead,
+    ElectricityUsageHourlyResponse,
     ElectricityUsageMonthSummaryRead,
     ElectricityUsageMonthSummaryResponse,
     ElectricityUsageRecordRead,
@@ -18,6 +22,10 @@ __all__ = [
     "FetchStatusRead",
     "ProviderInfo",
     "ElectricityUsageHistoryResponse",
+    "ElectricityUsageDailyPointRead",
+    "ElectricityUsageDailyResponse",
+    "ElectricityUsageHourlyPointRead",
+    "ElectricityUsageHourlyResponse",
     "ElectricityUsageMonthSummaryRead",
     "ElectricityUsageMonthSummaryResponse",
     "ElectricityUsagePointRead",

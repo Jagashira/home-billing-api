@@ -140,3 +140,77 @@ class ElectricityUsageService:
             "first_measured_at": row.first_measured_at,
             "last_measured_at": row.last_measured_at,
         }
+
+    def get_daily_usage(
+        self,
+        provider_name: str,
+        billing_month: str,
+        account_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        query = (
+            select(
+                func.date(ElectricityUsageRecord.measured_at).label("usage_date"),
+                func.sum(ElectricityUsageRecord.usage_kwh).label("usage_kwh"),
+            )
+            .where(
+                ElectricityUsageRecord.provider_name == provider_name,
+                ElectricityUsageRecord.billing_month == billing_month,
+            )
+            .group_by(func.date(ElectricityUsageRecord.measured_at))
+            .order_by(func.date(ElectricityUsageRecord.measured_at).asc())
+        )
+        if account_id:
+            query = query.where(ElectricityUsageRecord.account_id == account_id)
+        return [
+            {
+                "date": str(row.usage_date),
+                "usage_kwh": float(row.usage_kwh or 0),
+            }
+            for row in self._db.execute(query)
+        ]
+
+    def get_hourly_usage(
+        self,
+        provider_name: str,
+        billing_month: str,
+        account_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        query = (
+            select(ElectricityUsageRecord.measured_at, ElectricityUsageRecord.usage_kwh)
+            .where(
+                ElectricityUsageRecord.provider_name == provider_name,
+                ElectricityUsageRecord.billing_month == billing_month,
+            )
+            .order_by(ElectricityUsageRecord.measured_at.asc())
+        )
+        if account_id:
+            query = query.where(ElectricityUsageRecord.account_id == account_id)
+
+        slot_totals: dict[str, float] = {}
+        slot_counts: dict[str, int] = {}
+        for measured_at, usage_kwh in self._db.execute(query):
+            slot = self._build_slot_label(measured_at.hour, measured_at.minute)
+            slot_totals[slot] = slot_totals.get(slot, 0.0) + float(usage_kwh)
+            slot_counts[slot] = slot_counts.get(slot, 0) + 1
+
+        def sort_key(label: str) -> tuple[int, int]:
+            start = label.split("-")[0]
+            hour, minute = start.split(":")
+            return int(hour), int(minute)
+
+        return [
+            {
+                "slot": slot,
+                "usage_kwh": slot_totals[slot],
+                "average_usage_kwh": slot_totals[slot] / slot_counts[slot],
+            }
+            for slot in sorted(slot_totals.keys(), key=sort_key)
+        ]
+
+    def _build_slot_label(self, hour: int, minute: int) -> str:
+        end_hour = hour
+        end_minute = minute + 30
+        if end_minute >= 60:
+            end_hour = (hour + 1) % 24
+            end_minute -= 60
+        return f"{hour:02d}:{minute:02d}-{end_hour:02d}:{end_minute:02d}"

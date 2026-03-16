@@ -60,3 +60,28 @@ class ElectricityUsageSummaryRead(BaseModel):
     max_usage_kwh: float | None
     first_measured_at: datetime | None
     last_measured_at: datetime | None
+
+
+class ElectricityUsageDailyPointRead(BaseModel):
+    date: str
+    usage_kwh: float
+
+
+class ElectricityUsageDailyResponse(BaseModel):
+    provider_name: str
+    account_id: str | None
+    billing_month: str
+    days: list[ElectricityUsageDailyPointRead]
+
+
+class ElectricityUsageHourlyPointRead(BaseModel):
+    slot: str
+    usage_kwh: float
+    average_usage_kwh: float
+
+
+class ElectricityUsageHourlyResponse(BaseModel):
+    provider_name: str
+    account_id: str | None
+    billing_month: str
+    hours: list[ElectricityUsageHourlyPointRead]

@@ -234,6 +234,10 @@ WantedBy=multi-user.target
 - `GET /api/billing/history`
 - `GET /api/usage/electricity`
 - `GET /api/usage/electricity/months`
+- `GET /api/usage/electricity/timeseries?billing_month=2026年2月分`
+- `GET /api/usage/electricity/summary?billing_month=2026年2月分`
+- `GET /api/usage/electricity/daily?billing_month=2026年2月分`
+- `GET /api/usage/electricity/hourly?billing_month=2026年2月分`
 - `GET /api/usage/electricity/csv?billing_month=2026年2月分`
 - `POST /api/fetch/softbank_internet`
 - `POST /api/fetch/hepco_electricity`

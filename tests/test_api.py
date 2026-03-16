@@ -114,3 +114,89 @@ def test_electricity_usage_summary(client, db_session) -> None:
     assert body["average_usage_kwh"] == 0.4
     assert body["min_usage_kwh"] == 0.3
     assert body["max_usage_kwh"] == 0.5
+
+
+def test_electricity_usage_daily(client, db_session) -> None:
+    db_session.add_all(
+        [
+            ElectricityUsageRecord(
+                provider_name="hepco_electricity",
+                account_id="621-001-015806-0",
+                billing_month="2026年2月分",
+                measured_at=datetime(2026, 2, 1, 0, 0, 0),
+                usage_kwh=0.5,
+                source_url="https://example.test/csv",
+                csv_path="/tmp/test.csv",
+            ),
+            ElectricityUsageRecord(
+                provider_name="hepco_electricity",
+                account_id="621-001-015806-0",
+                billing_month="2026年2月分",
+                measured_at=datetime(2026, 2, 1, 0, 30, 0),
+                usage_kwh=0.3,
+                source_url="https://example.test/csv",
+                csv_path="/tmp/test.csv",
+            ),
+            ElectricityUsageRecord(
+                provider_name="hepco_electricity",
+                account_id="621-001-015806-0",
+                billing_month="2026年2月分",
+                measured_at=datetime(2026, 2, 2, 0, 0, 0),
+                usage_kwh=0.4,
+                source_url="https://example.test/csv",
+                csv_path="/tmp/test.csv",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = client.get("/api/usage/electricity/daily", params={"billing_month": "2026年2月分"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["days"] == [
+        {"date": "2026-02-01", "usage_kwh": 0.8},
+        {"date": "2026-02-02", "usage_kwh": 0.4},
+    ]
+
+
+def test_electricity_usage_hourly(client, db_session) -> None:
+    db_session.add_all(
+        [
+            ElectricityUsageRecord(
+                provider_name="hepco_electricity",
+                account_id="621-001-015806-0",
+                billing_month="2026年2月分",
+                measured_at=datetime(2026, 2, 1, 0, 0, 0),
+                usage_kwh=0.5,
+                source_url="https://example.test/csv",
+                csv_path="/tmp/test.csv",
+            ),
+            ElectricityUsageRecord(
+                provider_name="hepco_electricity",
+                account_id="621-001-015806-0",
+                billing_month="2026年2月分",
+                measured_at=datetime(2026, 2, 2, 0, 0, 0),
+                usage_kwh=0.3,
+                source_url="https://example.test/csv",
+                csv_path="/tmp/test.csv",
+            ),
+            ElectricityUsageRecord(
+                provider_name="hepco_electricity",
+                account_id="621-001-015806-0",
+                billing_month="2026年2月分",
+                measured_at=datetime(2026, 2, 1, 0, 30, 0),
+                usage_kwh=0.4,
+                source_url="https://example.test/csv",
+                csv_path="/tmp/test.csv",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = client.get("/api/usage/electricity/hourly", params={"billing_month": "2026年2月分"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["hours"] == [
+        {"slot": "00:00-00:30", "usage_kwh": 0.8, "average_usage_kwh": 0.4},
+        {"slot": "00:30-01:00", "usage_kwh": 0.4, "average_usage_kwh": 0.4},
+    ]
