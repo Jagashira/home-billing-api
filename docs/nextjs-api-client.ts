@@ -138,6 +138,24 @@ export type ElectricityUsageSummary = {
   last_measured_at: string | null;
 };
 
+export type GasMonthlyUsage = {
+  provider_name: string;
+  account_id: string;
+  billing_month: string;
+  usage_value: number | null;
+  usage_unit: string | null;
+  usage_days: number | null;
+  charge_amount: number;
+  currency: string;
+  detail_url: string | null;
+  source_url: string;
+  fetched_at: string;
+};
+
+export type GasMonthlyUsageResponse = {
+  items: GasMonthlyUsage[];
+};
+
 export type ElectricityUsageDailyPoint = {
   date: string;
   usage_kwh: number;
@@ -266,6 +284,10 @@ export async function runHepcoElectricityFetch(options?: RequestOptions): Promis
   return postJson("/api/fetch/hepco_electricity", options);
 }
 
+export async function runMitsuurokoGasFetch(options?: RequestOptions): Promise<FetchExecutionResponse> {
+  return postJson("/api/fetch/mitsuuroko_gas", options);
+}
+
 export async function fetchLatestFetchStatus(options?: RequestOptions): Promise<FetchStatus> {
   return getJson("/api/fetch/status", options);
 }
@@ -334,6 +356,21 @@ export async function fetchElectricityUsageHourly(
     provider_name: params.providerName,
     account_id: params.accountId,
     billing_month: params.billingMonth,
+  });
+}
+
+export async function fetchGasMonthlyUsage(
+  params: {
+    providerName?: string;
+    accountId?: string;
+    limit?: number;
+  } = {},
+  options?: RequestOptions,
+): Promise<GasMonthlyUsageResponse> {
+  return getJson("/api/usage/gas/monthly", options, {
+    provider_name: params.providerName,
+    account_id: params.accountId,
+    limit: params.limit,
   });
 }
 

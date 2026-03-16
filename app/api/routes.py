@@ -6,9 +6,15 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from app.api.dependencies import get_billing_service, get_electricity_usage_service, get_fetch_service
+from app.api.dependencies import (
+    get_billing_service,
+    get_electricity_usage_service,
+    get_fetch_service,
+    get_gas_usage_service,
+)
 from app.schemas.billing import BillingHistoryResponse, BillingRecordRead
 from app.schemas.fetch import BillingSummaryItemRead, FetchExecutionResponse, FetchStatusRead, UsageFileRead
+from app.schemas.gas import GasMonthlyUsageRead, GasMonthlyUsageResponse
 from app.schemas.provider import ProviderInfo
 from app.schemas.usage import (
     ElectricityUsageDailyPointRead,
@@ -26,6 +32,7 @@ from app.schemas.usage import (
 from app.services.billing_service import BillingService
 from app.services.electricity_usage_service import ElectricityUsageService
 from app.services.fetch_service import FetchService
+from app.services.gas_usage_service import GasUsageService
 
 
 router = APIRouter()
@@ -65,6 +72,16 @@ def get_latest_electricity_billing(
     return [
         BillingRecordRead.model_validate(item)
         for item in billing_service.get_latest_records(service_type="electricity")
+    ]
+
+
+@router.get("/api/billing/latest/gas", response_model=list[BillingRecordRead])
+def get_latest_gas_billing(
+    billing_service: BillingService = Depends(get_billing_service),
+) -> list[BillingRecordRead]:
+    return [
+        BillingRecordRead.model_validate(item)
+        for item in billing_service.get_latest_records(service_type="gas")
     ]
 
 
@@ -191,6 +208,21 @@ def get_electricity_usage_hourly(
     )
 
 
+@router.get("/api/usage/gas/monthly", response_model=GasMonthlyUsageResponse)
+def get_gas_monthly_usage(
+    provider_name: str = Query(default="mitsuuroko_gas"),
+    account_id: str | None = Query(default=None),
+    limit: int = Query(default=24, ge=1, le=120),
+    gas_service: GasUsageService = Depends(get_gas_usage_service),
+) -> GasMonthlyUsageResponse:
+    items = gas_service.get_monthly_usage(
+        provider_name=provider_name,
+        account_id=account_id,
+        limit=limit,
+    )
+    return GasMonthlyUsageResponse(items=[GasMonthlyUsageRead.model_validate(item) for item in items])
+
+
 @router.get("/api/usage/electricity/csv")
 def get_electricity_usage_csv(
     billing_month: str = Query(...),
@@ -262,6 +294,24 @@ def run_hepco_fetch(
     )
 
 
+@router.post("/api/fetch/mitsuuroko_gas", response_model=FetchExecutionResponse)
+def run_mitsuuroko_gas_fetch(
+    fetch_service: FetchService = Depends(get_fetch_service),
+) -> FetchExecutionResponse:
+    fetch_log, record, result, saved_count, skipped_count, usage_saved_count, usage_skipped_count = (
+        fetch_service.run_fetch("mitsuuroko_gas")
+    )
+    return _build_fetch_execution_response(
+        fetch_log=fetch_log,
+        record=record,
+        result=result,
+        saved_count=saved_count,
+        skipped_count=skipped_count,
+        usage_saved_count=usage_saved_count,
+        usage_skipped_count=usage_skipped_count,
+    )
+
+
 @router.get("/api/fetch/status", response_model=FetchStatusRead | None)
 def get_fetch_status(
     fetch_service: FetchService = Depends(get_fetch_service),
@@ -295,6 +345,9 @@ def _build_fetch_execution_response(
             csv_url=item.get("csv_url"),
             csv_path=item.get("csv_path"),
             usage_row_count=item.get("usage_row_count"),
+            usage_value=item.get("usage_value"),
+            usage_unit=item.get("usage_unit"),
+            usage_days=item.get("usage_days"),
         )
         for item in payload.get("billing_items", [])
     ] or None

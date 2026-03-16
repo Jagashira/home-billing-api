@@ -12,6 +12,7 @@ NEXT_PUBLIC_HOME_BILLING_API_URL=http://192.168.11.12:8000
 
 ```ts
 import {
+  fetchGasMonthlyUsage,
   fetchElectricityUsageDaily,
   fetchElectricityUsageHourly,
   fetchElectricityUsageSummary,
@@ -21,6 +22,10 @@ import {
 
 const months = await fetchElectricityUsageMonths({
   providerName: "hepco_electricity",
+});
+
+const gasMonthly = await fetchGasMonthlyUsage({
+  providerName: "mitsuuroko_gas",
 });
 
 const latestMonth = months.items[0]?.billing_month;
@@ -55,6 +60,8 @@ if (latestMonth) {
 - 折れ線グラフ: `fetchElectricityUsageTimeSeries`
 - 日別棒グラフ: `fetchElectricityUsageDaily`
 - 時間帯別棒グラフ: `fetchElectricityUsageHourly`
+- ガス月別使用量と料金グラフ: `fetchGasMonthlyUsage`
 - CSV ダウンロードリンク: `buildElectricityUsageCsvUrl`
 - SoftBank 手動取得ボタン: `runSoftbankInternetFetch`
 - HEPCO 手動取得ボタン: `runHepcoElectricityFetch`
+- ミツウロコガス手動取得ボタン: `runMitsuurokoGasFetch`

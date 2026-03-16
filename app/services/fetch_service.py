@@ -144,6 +144,9 @@ class FetchService:
                         "csv_url": item.csv_url,
                         "csv_path": item.csv_path,
                         "usage_row_count": item.usage_row_count,
+                        "usage_value": item.usage_value,
+                        "usage_unit": item.usage_unit,
+                        "usage_days": item.usage_days,
                         "billing_items": json.loads(result.raw_data_json).get("billing_items", [])
                         if result.raw_data_json
                         else None,

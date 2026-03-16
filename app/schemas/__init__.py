@@ -1,5 +1,6 @@
 from app.schemas.billing import BillingHistoryResponse, BillingRecordRead
 from app.schemas.fetch import FetchExecutionResponse, FetchStatusRead
+from app.schemas.gas import GasMonthlyUsageRead, GasMonthlyUsageResponse
 from app.schemas.provider import ProviderInfo
 from app.schemas.usage import (
     ElectricityUsageHistoryResponse,
@@ -32,4 +33,6 @@ __all__ = [
     "ElectricityUsageRecordRead",
     "ElectricityUsageSummaryRead",
     "ElectricityUsageTimeSeriesResponse",
+    "GasMonthlyUsageRead",
+    "GasMonthlyUsageResponse",
 ]

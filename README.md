@@ -73,6 +73,11 @@ cp .env.example .env
 - `HEPCO_PASSWORD`
 - `HEPCO_LOGIN_URL`
 - `HEPCO_TARGET_URL`
+- `MITSUUROKO_LOGIN_ID`
+- `MITSUUROKO_PASSWORD`
+- `MITSUUROKO_LOGIN_URL`
+- `MITSUUROKO_GAS_USAGE_URL`
+- `MITSUUROKO_GAS_CHARGE_URL`
 - `DATABASE_URL`
 - `LOG_LEVEL`
 - `HEADLESS`
@@ -135,6 +140,7 @@ uvicorn app.main:app --reload
 ```bash
 curl -X POST http://127.0.0.1:8000/api/fetch/softbank_internet
 curl -X POST http://127.0.0.1:8000/api/fetch/hepco_electricity
+curl -X POST http://127.0.0.1:8000/api/fetch/mitsuuroko_gas
 ```
 
 ### スクリプト経由
@@ -142,6 +148,7 @@ curl -X POST http://127.0.0.1:8000/api/fetch/hepco_electricity
 ```bash
 python -m scripts.run_fetch softbank_internet
 python -m scripts.run_fetch hepco_electricity
+python -m scripts.run_fetch mitsuuroko_gas
 ```
 
 ### Docker コンテナ内で実行
@@ -149,6 +156,7 @@ python -m scripts.run_fetch hepco_electricity
 ```bash
 docker compose exec api python -m scripts.run_fetch softbank_internet
 docker compose exec api python -m scripts.run_fetch hepco_electricity
+docker compose exec api python -m scripts.run_fetch mitsuuroko_gas
 ```
 
 ## DB を見る
@@ -231,6 +239,7 @@ WantedBy=multi-user.target
 - `GET /api/billing/latest`
 - `GET /api/billing/latest/internet`
 - `GET /api/billing/latest/electricity`
+- `GET /api/billing/latest/gas`
 - `GET /api/billing/history`
 - `GET /api/usage/electricity`
 - `GET /api/usage/electricity/months`
@@ -239,8 +248,10 @@ WantedBy=multi-user.target
 - `GET /api/usage/electricity/daily?billing_month=2026年2月分`
 - `GET /api/usage/electricity/hourly?billing_month=2026年2月分`
 - `GET /api/usage/electricity/csv?billing_month=2026年2月分`
+- `GET /api/usage/gas/monthly`
 - `POST /api/fetch/softbank_internet`
 - `POST /api/fetch/hepco_electricity`
+- `POST /api/fetch/mitsuuroko_gas`
 - `GET /api/fetch/status`
 
 ## テスト
@@ -262,8 +273,10 @@ pytest
 - 実運用資格情報は絶対にコミットしないでください。
 - SoftBank のログイン selector と DOM は仮置きです。`app/providers/softbank_internet/` 配下の TODO を起点に差し替えてください。
 - HEPCO のログイン selector と DOM は実ページに合わせた初期候補です。`app/providers/hepco_electricity/` 配下の selector 候補を必要に応じて調整してください。
+- ミツウロコのログイン selector と DOM も初期候補です。`app/providers/mitsuuroko_gas/` 配下の selector 候補を必要に応じて調整してください。
 - 現在のログイン開始 URL は `SOFTBANK_LOGIN_URL` で差し替え可能です。既定の想定 URL は `https://bbss.softbankbb.co.jp/AUT/ftth?mem=memCertAFsd&.func=myPage` です。
 - `HEPCO_LOGIN_URL` の既定値は `https://www.epower-portal.com/hepco` です。
+- `MITSUUROKO_LOGIN_URL` の既定値は `https://mitsuurokogroup-enecheck.com/login.php` です。
 - `billing_records` は月単位で保存し、同じ `provider_name + account_id + service_type + billing_month` が既にあれば保存をスキップします。
 - `electricity_usage_records` は 30 分単位で保存し、同じ `provider_name + account_id + measured_at` が既にあれば保存をスキップします。
 - parser を更新しても既存の月レコードは重複スキップされるため、抽出結果を作り直したい場合は対象 DB を退避または再作成してください。

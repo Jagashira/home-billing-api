@@ -26,6 +26,11 @@ class Settings:
     hepco_password: str
     hepco_login_url: str
     hepco_target_url: str
+    mitsuuroko_login_id: str
+    mitsuuroko_password: str
+    mitsuuroko_login_url: str
+    mitsuuroko_gas_usage_url: str
+    mitsuuroko_gas_charge_url: str
     logs_dir: Path
     snapshots_dir: Path
     data_dir: Path
@@ -63,6 +68,20 @@ def get_settings() -> Settings:
         hepco_target_url=os.getenv(
             "HEPCO_TARGET_URL",
             "https://www.epower-portal.com/hepco/mypage/usages/billinginfo/",
+        ),
+        mitsuuroko_login_id=os.getenv("MITSUUROKO_LOGIN_ID", ""),
+        mitsuuroko_password=os.getenv("MITSUUROKO_PASSWORD", ""),
+        mitsuuroko_login_url=os.getenv(
+            "MITSUUROKO_LOGIN_URL",
+            "https://mitsuurokogroup-enecheck.com/login.php",
+        ),
+        mitsuuroko_gas_usage_url=os.getenv(
+            "MITSUUROKO_GAS_USAGE_URL",
+            "https://mitsuurokogroup-enecheck.com/gas.php?mode=consumption",
+        ),
+        mitsuuroko_gas_charge_url=os.getenv(
+            "MITSUUROKO_GAS_CHARGE_URL",
+            "https://mitsuurokogroup-enecheck.com/gas.php?mode=charge",
         ),
         logs_dir=logs_dir,
         snapshots_dir=snapshots_dir,

@@ -16,6 +16,9 @@ class BillingSummaryItemRead(BaseModel):
     csv_url: str | None = None
     csv_path: str | None = None
     usage_row_count: int | None = None
+    usage_value: float | None = None
+    usage_unit: str | None = None
+    usage_days: int | None = None
 
 
 class UsageFileRead(BaseModel):
