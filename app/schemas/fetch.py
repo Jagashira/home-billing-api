@@ -12,6 +12,17 @@ class BillingSummaryItemRead(BaseModel):
     usage_period: str | None = None
     payment_status: str | None = None
     detail_url: str | None = None
+    pdf_url: str | None = None
+    csv_url: str | None = None
+    csv_path: str | None = None
+    usage_row_count: int | None = None
+
+
+class UsageFileRead(BaseModel):
+    billing_month: str
+    csv_url: str
+    csv_path: str | None = None
+    row_count: int = 0
 
 
 class FetchExecutionResponse(BaseModel):
@@ -27,6 +38,9 @@ class FetchExecutionResponse(BaseModel):
     currency: str | None = None
     status: str | None = None
     billing_items: list[BillingSummaryItemRead] | None = None
+    usage_saved_count: int = 0
+    usage_skipped_count: int = 0
+    usage_files: list[UsageFileRead] | None = None
     error_code: str | None = None
     error_message: str | None = None
     screenshot_path: str | None = None

@@ -36,6 +36,7 @@ class ProviderFetchPayload:
     source_url: str
     html_snapshot_path: str | None
     screenshot_path: str | None
+    auxiliary_data: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,27 @@ class BillingSummaryItem:
     usage_period: str | None = None
     payment_status: str | None = None
     detail_url: str | None = None
+    pdf_url: str | None = None
+    csv_url: str | None = None
+    csv_path: str | None = None
+    usage_row_count: int | None = None
+
+
+@dataclass(frozen=True)
+class ElectricityUsageRecordItem:
+    billing_month: str
+    measured_at: datetime
+    usage_kwh: float
+    csv_path: str | None = None
+    source_url: str | None = None
+
+
+@dataclass(frozen=True)
+class UsageFileItem:
+    billing_month: str
+    csv_url: str
+    csv_path: str | None = None
+    row_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -60,6 +82,8 @@ class ProviderFetchResult:
     source_url: str
     status: str
     billing_items: list[BillingSummaryItem] | None = None
+    usage_records: list[ElectricityUsageRecordItem] | None = None
+    usage_files: list[UsageFileItem] | None = None
     raw_data_json: str | None = None
     raw_snapshot_path: str | None = None
     screenshot_path: str | None = None

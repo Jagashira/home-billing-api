@@ -7,10 +7,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.api.dependencies import get_billing_service, get_fetch_service
+from app.api.dependencies import get_billing_service, get_electricity_usage_service, get_fetch_service
 from app.db import Base
 from app.main import app
 from app.services.billing_service import BillingService
+from app.services.electricity_usage_service import ElectricityUsageService
 from app.services.fetch_service import FetchService
 
 
@@ -38,9 +39,12 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     def override_fetch_service() -> FetchService:
         return FetchService(db_session)
 
+    def override_electricity_usage_service() -> ElectricityUsageService:
+        return ElectricityUsageService(db_session)
+
     app.dependency_overrides[get_billing_service] = override_billing_service
     app.dependency_overrides[get_fetch_service] = override_fetch_service
+    app.dependency_overrides[get_electricity_usage_service] = override_electricity_usage_service
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
-

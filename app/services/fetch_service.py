@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models.billing_record import BillingRecord
+from app.models.electricity_usage_record import ElectricityUsageRecord
 from app.models.fetch_log import FetchLog
 from app.providers.base.errors import ErrorCode, ProviderError
 from app.providers.base.interfaces import BillingSummaryItem, ProviderFetchContext, ProviderFetchResult
@@ -35,7 +36,10 @@ class FetchService:
             for provider in self._registry.list()
         ]
 
-    def run_fetch(self, provider_name: str) -> tuple[FetchLog, BillingRecord | None, int, int]:
+    def run_fetch(
+        self,
+        provider_name: str,
+    ) -> tuple[FetchLog, BillingRecord | None, ProviderFetchResult | None, int, int, int, int]:
         provider = self._registry.get(provider_name)
         started_at = datetime.utcnow()
         context = ProviderFetchContext(
@@ -54,6 +58,7 @@ class FetchService:
         try:
             result = provider.fetch_billing(context)
             record, saved_count, skipped_count = self._persist_billing_records(result)
+            usage_saved_count, usage_skipped_count = self._persist_usage_records(result)
             fetch_log.finished_at = datetime.utcnow()
             fetch_log.success = True
             fetch_log.screenshot_path = result.screenshot_path
@@ -62,7 +67,15 @@ class FetchService:
             self._db.commit()
             self._db.refresh(fetch_log)
             logger.info("Fetch succeeded for provider=%s", provider_name)
-            return fetch_log, record, saved_count, skipped_count
+            return (
+                fetch_log,
+                record,
+                result,
+                saved_count,
+                skipped_count,
+                usage_saved_count,
+                usage_skipped_count,
+            )
         except ProviderError as exc:
             logger.exception("Fetch failed for provider=%s", provider_name)
             fetch_log.finished_at = datetime.utcnow()
@@ -74,7 +87,7 @@ class FetchService:
             self._db.add(fetch_log)
             self._db.commit()
             self._db.refresh(fetch_log)
-            return fetch_log, None, 0, 0
+            return fetch_log, None, None, 0, 0, 0, 0
         except Exception as exc:
             logger.exception("Unexpected fetch failure for provider=%s", provider_name)
             fetch_log.finished_at = datetime.utcnow()
@@ -84,7 +97,7 @@ class FetchService:
             self._db.add(fetch_log)
             self._db.commit()
             self._db.refresh(fetch_log)
-            return fetch_log, None, 0, 0
+            return fetch_log, None, None, 0, 0, 0, 0
 
     def get_latest_fetch_status(self) -> FetchLog | None:
         query = select(FetchLog).order_by(desc(FetchLog.started_at)).limit(1)
@@ -127,7 +140,14 @@ class FetchService:
                         "usage_period": item.usage_period,
                         "payment_status": item.payment_status,
                         "detail_url": item.detail_url,
+                        "pdf_url": item.pdf_url,
+                        "csv_url": item.csv_url,
+                        "csv_path": item.csv_path,
+                        "usage_row_count": item.usage_row_count,
                         "billing_items": json.loads(result.raw_data_json).get("billing_items", [])
+                        if result.raw_data_json
+                        else None,
+                        "usage_files": json.loads(result.raw_data_json).get("usage_files", [])
                         if result.raw_data_json
                         else None,
                     },
@@ -166,4 +186,43 @@ class FetchService:
             raise ProviderError(
                 ErrorCode.DB_WRITE_FAILED,
                 f"Failed to persist billing record. {exc}",
+            ) from exc
+
+    def _persist_usage_records(self, result: ProviderFetchResult) -> tuple[int, int]:
+        if not result.usage_records:
+            return 0, 0
+
+        try:
+            saved_count = 0
+            skipped_count = 0
+            for item in result.usage_records:
+                existing = self._db.scalar(
+                    select(ElectricityUsageRecord).where(
+                        ElectricityUsageRecord.provider_name == result.provider_name,
+                        ElectricityUsageRecord.account_id == result.account_id,
+                        ElectricityUsageRecord.measured_at == item.measured_at,
+                    )
+                )
+                if existing is not None:
+                    skipped_count += 1
+                    continue
+
+                record = ElectricityUsageRecord(
+                    provider_name=result.provider_name,
+                    account_id=result.account_id,
+                    billing_month=item.billing_month,
+                    measured_at=item.measured_at,
+                    usage_kwh=item.usage_kwh,
+                    source_url=item.source_url,
+                    csv_path=item.csv_path,
+                )
+                self._db.add(record)
+                saved_count += 1
+            self._db.commit()
+            return saved_count, skipped_count
+        except Exception as exc:
+            self._db.rollback()
+            raise ProviderError(
+                ErrorCode.DB_WRITE_FAILED,
+                f"Failed to persist electricity usage record. {exc}",
             ) from exc

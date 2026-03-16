@@ -2,6 +2,7 @@ from app.providers.base.errors import ErrorCode, ProviderError
 from app.providers.base.interfaces import (
     Authenticator,
     BillingSummaryItem,
+    ElectricityUsageRecordItem,
     Fetcher,
     Parser,
     PersistResult,
@@ -11,12 +12,14 @@ from app.providers.base.interfaces import (
     ProviderFetchPayload,
     ProviderFetchResult,
     ProviderMetadata,
+    UsageFileItem,
 )
 from app.providers.base.registry import ProviderRegistry
 
 __all__ = [
     "Authenticator",
     "BillingSummaryItem",
+    "ElectricityUsageRecordItem",
     "ErrorCode",
     "Fetcher",
     "Parser",
@@ -29,4 +32,5 @@ __all__ = [
     "ProviderFetchResult",
     "ProviderMetadata",
     "ProviderRegistry",
+    "UsageFileItem",
 ]
