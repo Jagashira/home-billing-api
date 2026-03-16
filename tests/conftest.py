@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+from collections.abc import Generator
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.api.dependencies import get_billing_service, get_fetch_service
+from app.db import Base
+from app.main import app
+from app.services.billing_service import BillingService
+from app.services.fetch_service import FetchService
+
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=Session)
+
+
+@pytest.fixture()
+def db_session() -> Generator[Session, None, None]:
+    Base.metadata.create_all(bind=engine)
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+        Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture()
+def client(db_session: Session) -> Generator[TestClient, None, None]:
+    def override_billing_service() -> BillingService:
+        return BillingService(db_session)
+
+    def override_fetch_service() -> FetchService:
+        return FetchService(db_session)
+
+    app.dependency_overrides[get_billing_service] = override_billing_service
+    app.dependency_overrides[get_fetch_service] = override_fetch_service
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
