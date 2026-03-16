@@ -100,22 +100,6 @@ python -m scripts.init_db
 uvicorn app.main:app --reload
 ```
 
-### Mac でローカル実行
-
-初回セットアップ:
-
-```bash
-./scripts/setup_local_mac.sh
-```
-
-起動:
-
-```bash
-./scripts/run_local.sh
-```
-
-既定では `0.0.0.0:8000` で待ち受けます。必要なら `HOST` と `PORT` を上書きしてください。
-
 ### Docker で起動
 
 ```bash
