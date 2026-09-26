@@ -8,5 +8,6 @@ logs/*.log
 snapshots/**/*.html
 snapshots/**/*.png
 snapshots/**/*.json
+data/timetree
+timetree-local
 *.pyc
-

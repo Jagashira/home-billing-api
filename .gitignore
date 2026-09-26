@@ -15,7 +15,8 @@ logs/*.log
 snapshots/**/*.html
 snapshots/**/*.png
 snapshots/**/*.json
+timetree-local/
+data/timetree/
 dist/
 build/
 *.egg-info/
-
