@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -35,7 +35,7 @@ def configure_timetree_logging(config: TimeTreeConfig) -> logging.Logger:
 
 
 def timestamp_slug() -> str:
-    return datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
 
 
 def write_private_json(path: Path, payload: Any) -> None:
@@ -78,7 +78,7 @@ def capture_failure(
     write_private_json(
         metadata_path,
         {
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "operation": operation,
             "url": current_url,
             "error_type": type(error).__name__,

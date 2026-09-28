@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 POC_TITLE_PREFIX = "[HOME-SERVER-POC]"
@@ -9,7 +9,7 @@ POC_TOKEN_PREFIX = "HSP-"
 
 
 def utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass(frozen=True)
