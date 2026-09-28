@@ -189,6 +189,29 @@ python -m app.timetree --data-dir ./timetree-local pending-cleanup \
 
 このコマンドはブラウザとPlaywrightを起動せず、`pending-creates.json`だけをatomic replaceで更新します。`owned-events.json`、storage state、session、TimeTree上の予定には触れません。tokenが0件または重複している場合は変更せず失敗します。
 
+### 作成済みのpendingをownedへ昇格する
+
+Save後のURL解決だけが失敗し、完全一致するイベントがTimeTree上に実在する場合は、再CREATEせずに専用コマンドで照合します。既定はdry-runです。
+
+```bash
+python -m app.timetree --data-dir ./timetree-local \
+  --calendar '対象カレンダーの完全一致名' \
+  reconcile-pending \
+  --ownership-token HSP-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+この処理はpending台帳のtoken・カレンダー名・完全一致タイトル・日付を読み、TimeTreeの予定検索から完全一致する月表示結果を1件だけ選び、同じカレンダー、タイトル、token、日付と一意なevent URL/event IDをread-onlyで確認します。検索欄、月表示、詳細パネルに同じタイトルが重複していても、それぞれ最大1件かつ詳細タイトルが1件で、すべてが現在の同一canonical event URLへ収束するときだけ一意と扱います。異なるevent ID、検索結果の重複、余分なタイトル表現、日付不一致、pendingの欠落・重複は変更せず拒否します。
+
+dry-runの確認後だけ`--apply`を付けます。`--apply`はTimeTree上のSave/Edit/Deleteを操作せず、検証済みevent URLを使ってローカルのowned台帳へ登録し、同じpending 1件を削除します。
+
+```bash
+python -m app.timetree --data-dir ./timetree-local \
+  --calendar '対象カレンダーの完全一致名' \
+  reconcile-pending \
+  --ownership-token HSP-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+  --apply
+```
+
 ## ログ、スクリーンショット、HTML、trace
 
 コンテナログには次の識別子を出します。
@@ -200,6 +223,7 @@ python -m app.timetree --data-dir ./timetree-local pending-cleanup \
 - `TIMETREE_EVENT_CREATED`
 - `TIMETREE_EVENT_UPDATED`
 - `TIMETREE_EVENT_DELETED`
+- `TIMETREE_PENDING_RECONCILED`
 - `TIMETREE_DRY_RUN`
 - `TIMETREE_ERROR`
 
@@ -253,7 +277,7 @@ DB migration、API route、dashboard変更、新サービスはありません�
 - storage stateがない状態を `TIMETREE_AUTH_REQUIRED` / 終了コード2として判定: 成功
 - 修正後のheadless smoke testで公開URLが`/intl/ja`へ遷移し、認証情報なしでは`authenticated: false`になることを再確認
 - 未認証エラー時の `error.json`、PNG screenshot、debug HTML、Playwright trace保存: 成功
-- 変更系selectorが複数の可視要素へ一致した場合の拒否、Calendar List・event detail title・Edit formの遅延描画待機、実際に観測した認証済みURLの永続化、予定詳細URLの厳格な検証、date-only処理、Save事前検証、release announcementの限定的なdismiss、pending台帳のatomic cleanupを含め、PoC単体テストは合計81件成功
+- 変更系selectorが複数の可視要素へ一致した場合の拒否、Calendar List・event detail title・Edit formの遅延描画待機、実際に観測した認証済みURLの永続化、予定詳細URLの厳格な検証、date-only処理、Save事前検証、release announcementの限定的なdismiss、pending台帳のatomic cleanup、同一イベントの重複DOM表現のcanonical URL収束、完全一致検索によるpending reconciliationを含め、PoC単体テストは合計96件成功
 - `/signin`と`/intl/ja`の拒否、`/calendars/<id>`の認識、公開ページのfail-closed、複数page、新規tab、storage state/session保存、timeout時に認証ファイルを作らないことを回帰テストで確認
 - 認証済みrouteでReact loading終了と操作要素をbounded waitすること、公開routeではapp shellを待たないこと、debug診断に件数だけを含めることを回帰テストで確認
 - API全テスト: 35件成功、11件失敗。既存のTimeTree PoC文書に記録済みの同じ11件が失敗しており、今回の変更による新規失敗はありません。既存失敗はインメモリSQLiteの別connectionでtableが見えない問題10件とHEPCO parserの既存期待値差1件です。

@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-from playwright.sync_api import BrowserContext, Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
+from playwright.sync_api import (
+    BrowserContext,
+    Error as PlaywrightError,
+    Page,
+    TimeoutError as PlaywrightTimeoutError,
+    sync_playwright,
+)
 
 from app.timetree.artifacts import (
     capture_failure,
@@ -340,6 +346,71 @@ class TimeTreeClient:
             self.registry.clear_pending_create(spec.ownership_token)
             self.logger.info(
                 "TIMETREE_EVENT_CREATED record_id=%s event_id=%s title=%s",
+                record.record_id,
+                record.event_id,
+                record.current_title,
+            )
+            return record
+
+    def reconcile_pending_create(
+        self,
+        *,
+        ownership_token: str,
+        dry_run: bool = True,
+    ) -> OwnedEventRecord | dict[str, Any]:
+        pending = self.registry.get_pending_create(ownership_token)
+        calendar_name = self._require_calendar_name()
+        if pending["calendar_name"] != calendar_name:
+            raise OwnershipError(
+                "Pending calendar name does not exactly match the configured target calendar."
+            )
+        expected_date = date.fromisoformat(pending["event_date"])
+        expected_title = pending["title"]
+        with self._session("reconcile_pending") as (page, _):
+            self._open_authenticated_home(page)
+            calendar = self._resolve_calendar(page, calendar_name)
+            self._open_calendar(page, calendar)
+            event_url = self._search_exact_title_event_url(page, expected_title)
+            event_id = derive_event_id(event_url)
+            if not event_id:
+                raise OwnershipError("Reconciled event URL did not contain a stable event ID.")
+            if not self._event_url_belongs_to_calendar(event_url, calendar.url):
+                raise OwnershipError("Reconciled event URL does not belong to the exact target calendar.")
+            self._wait_for_event_detail_title(
+                page,
+                expected_title=expected_title,
+                expected_event_id=event_id,
+            )
+            visible_text = page.locator("body").inner_text()
+            if expected_title not in visible_text or ownership_token not in visible_text:
+                raise OwnershipError(
+                    "Reconciled event does not expose the exact pending title and ownership token."
+                )
+            observed_date = self._event_detail_start_date(page)
+            if observed_date != expected_date.isoformat():
+                raise OwnershipError(
+                    "Reconciled event date does not exactly match the pending event date."
+                )
+            plan = {
+                "dry_run": dry_run,
+                "operation": "reconcile_pending",
+                "ownership_token": ownership_token,
+                "calendar": calendar_name,
+                "title": expected_title,
+                "event_date": expected_date.isoformat(),
+                "event_url": event_url,
+                "event_id": event_id,
+                "action": "promote_pending_to_owned",
+            }
+            if dry_run:
+                self.logger.info("TIMETREE_DRY_RUN plan=%s", plan)
+                return plan
+            record = self.registry.promote_pending_create(
+                ownership_token,
+                event_url=event_url,
+            )
+            self.logger.info(
+                "TIMETREE_PENDING_RECONCILED record_id=%s event_id=%s title=%s",
                 record.record_id,
                 record.event_id,
                 record.current_title,
@@ -1431,10 +1502,89 @@ class TimeTreeClient:
         return True
 
     def _resolve_created_event_url(self, page: Page, spec: TestEventSpec) -> str:
-        if derive_event_id(page.url):
-            return page.url
         self._dismiss_release_announcement(page)
-        exact_title = page.get_by_text(spec.title, exact=True)
+        return self._resolve_exact_title_event_url(page, spec.title)
+
+    def _search_exact_title_event_url(self, page: Page, title: str) -> str:
+        search_control = unique_visible(
+            (page.locator("[data-test-id='search-field'][role='button']"),),
+            "open TimeTree event search",
+        )
+        if search_control is None:
+            raise OwnershipError("Could not uniquely identify the TimeTree event search control.")
+        search_control.click()
+        try:
+            page.wait_for_function(
+                """
+                () => Array.from(
+                  document.querySelectorAll(
+                    "input[name='search-field'][placeholder='Enter keywords to search']"
+                  )
+                ).filter(element =>
+                  element.offsetWidth || element.offsetHeight || element.getClientRects().length
+                ).length === 1
+                """,
+                timeout=self.config.timeout_ms,
+                polling=100,
+            )
+        except PlaywrightTimeoutError as error:
+            raise OwnershipError("TimeTree event search input did not become uniquely visible.") from error
+        search_input = page.locator(
+            "input[name='search-field'][placeholder='Enter keywords to search']"
+        )
+        try:
+            # Locator.fill() re-resolves the React node and still enforces
+            # Playwright strictness if more than one input exists.
+            search_input.fill(title)
+        except PlaywrightError as error:
+            raise OwnershipError(
+                "Could not uniquely identify the TimeTree event search input."
+            ) from error
+        try:
+            page.wait_for_function(
+                """
+                expectedTitle => Array.from(
+                  document.querySelectorAll("[data-test-id='monthly-calendar'] *")
+                ).some(element =>
+                  (element.offsetWidth || element.offsetHeight || element.getClientRects().length) &&
+                  element.innerText.trim() === expectedTitle
+                )
+                """,
+                arg=title,
+                timeout=self.config.timeout_ms,
+                polling=100,
+            )
+        except PlaywrightTimeoutError as error:
+            raise OwnershipError(
+                "The exact pending title did not appear in TimeTree event search results."
+            ) from error
+        candidates = page.locator("[data-test-id='monthly-calendar']").get_by_text(
+            title,
+            exact=True,
+        )
+        visible_candidates = [
+            candidates.nth(index)
+            for index in range(candidates.count())
+            if candidates.nth(index).is_visible()
+        ]
+        if len(visible_candidates) != 1:
+            raise OwnershipError(
+                "Expected exactly one visible exact-title TimeTree search result; "
+                f"found {len(visible_candidates)}."
+            )
+        visible_candidates[0].click()
+        event_url = self._wait_for_exact_title_event_url(page, title)
+        if not event_url:
+            raise OwnershipError(
+                "The exact TimeTree search result did not open one canonical event URL."
+            )
+        return event_url
+
+    def _resolve_exact_title_event_url(self, page: Page, title: str) -> str:
+        current = self._current_exact_title_event_url(page, title)
+        if current:
+            return current
+        exact_title = page.get_by_text(title, exact=True)
         visible_candidates: list[Any] = []
         event_urls: set[str] = set()
         for index in range(exact_title.count()):
@@ -1442,30 +1592,145 @@ class TimeTreeClient:
             if not candidate.is_visible():
                 continue
             visible_candidates.append(candidate)
-            href = candidate.get_attribute("href")
+            href = candidate.evaluate(
+                "element => element.closest('a[href]')?.href || element.getAttribute('href')"
+            )
             if href:
                 event_url = urljoin(page.url, href)
                 if derive_event_id(event_url):
                     event_urls.add(event_url)
         if len(event_urls) == 1:
             self._navigate(page, event_urls.pop(), "open_created_event")
-            return page.url
+            current = self._wait_for_exact_title_event_url(page, title)
+            if current:
+                return current
         if len(event_urls) > 1:
             raise OwnershipError(
                 "Created title matched multiple event URLs; refusing to guess which event is owned."
             )
         if len(visible_candidates) == 1:
             visible_candidates[0].click()
-            page.wait_for_timeout(500)
-            if derive_event_id(page.url):
-                return page.url
+            current = self._wait_for_exact_title_event_url(page, title)
+            if current:
+                return current
         elif len(visible_candidates) > 1:
+            current = self._wait_for_exact_title_event_url(page, title)
+            if current:
+                return current
             raise OwnershipError(
-                "Created title matched multiple visible elements without a unique event URL; refusing to guess."
+                "Created title matched multiple visible representations that did not converge "
+                "to one canonical event URL; refusing to guess."
             )
         raise OwnershipError(
             "Created title was not linked to a stable TimeTree event URL. The operation is not safe to manage later."
         )
+
+    def _wait_for_exact_title_event_url(self, page: Page, title: str) -> str | None:
+        try:
+            page.wait_for_function(
+                """
+                expectedTitle => {
+                  const parts = location.pathname.split('/').filter(Boolean);
+                  const detailTitles = Array.from(
+                    document.querySelectorAll("h1[data-test-id='event-title']")
+                  ).filter(element =>
+                    (element.offsetWidth || element.offsetHeight || element.getClientRects().length) &&
+                    element.innerText.trim() === expectedTitle
+                  );
+                  return parts.length === 4 && parts[0] === 'calendars' &&
+                    parts[2] === 'events' && Boolean(parts[1]) && Boolean(parts[3]) &&
+                    detailTitles.length === 1;
+                }
+                """,
+                arg=title,
+                timeout=self.config.timeout_ms,
+                polling=100,
+            )
+        except PlaywrightTimeoutError:
+            return None
+        return self._current_exact_title_event_url(page, title)
+
+    def _current_exact_title_event_url(self, page: Page, title: str) -> str | None:
+        if not derive_event_id(page.url):
+            return None
+        representations = page.get_by_text(title, exact=True).evaluate_all(
+            """
+            elements => elements
+              .filter(element =>
+                element.offsetWidth || element.offsetHeight || element.getClientRects().length
+              )
+              .map(element => ({
+                inMonthlyCalendar: Boolean(element.closest("[data-test-id='monthly-calendar']")),
+                inEventDetail: Boolean(element.closest("[data-test-id='event-detail']")),
+                inSearchField: Boolean(element.closest("[data-test-id='search-field']")),
+                isDetailTitle: element.matches("h1[data-test-id='event-title']"),
+              }))
+            """
+        )
+        detail_titles = [item for item in representations if item["isDetailTitle"]]
+        monthly_titles = [item for item in representations if item["inMonthlyCalendar"]]
+        search_titles = [item for item in representations if item["inSearchField"]]
+        others = [
+            item
+            for item in representations
+            if not item["inMonthlyCalendar"]
+            and not item["inEventDetail"]
+            and not item["inSearchField"]
+        ]
+        if (
+            len(detail_titles) != 1
+            or len(monthly_titles) > 1
+            or len(search_titles) > 1
+            or others
+        ):
+            return None
+        return page.url
+
+    @staticmethod
+    def _event_url_belongs_to_calendar(event_url: str, calendar_url: str | None) -> bool:
+        if not calendar_url:
+            return False
+        event_parts = [part for part in urlparse(event_url).path.split("/") if part]
+        calendar_parts = [part for part in urlparse(calendar_url).path.split("/") if part]
+        return (
+            len(event_parts) == 4
+            and event_parts[0] == "calendars"
+            and event_parts[2] == "events"
+            and len(calendar_parts) == 2
+            and calendar_parts[0] == "calendars"
+            and event_parts[1] == calendar_parts[1]
+        )
+
+    def _event_detail_start_date(self, page: Page) -> str | None:
+        selector = "[data-test-id='event-date-time-start']"
+        try:
+            page.wait_for_function(
+                """
+                selector => {
+                  const visible = element => Boolean(
+                    element.offsetWidth || element.offsetHeight || element.getClientRects().length
+                  );
+                  const values = Array.from(document.querySelectorAll(selector)).filter(visible);
+                  return values.length === 1 && values[0].innerText.trim().length > 0;
+                }
+                """,
+                arg=selector,
+                timeout=self.config.timeout_ms,
+                polling=100,
+            )
+        except PlaywrightTimeoutError as exc:
+            raise OwnershipError("Event detail start date did not become uniquely visible.") from exc
+        control = unique_visible((page.locator(selector),), "read event detail start date")
+        if control is None:
+            raise OwnershipError("Event detail start date is not uniquely visible.")
+        value = control.inner_text().splitlines()[0].strip()
+        for pattern in ("%a, %b %d %Y", "%a, %b %d, %Y"):
+            try:
+                parsed = time.strptime(value, pattern)
+                return f"{parsed.tm_year:04d}-{parsed.tm_mon:02d}-{parsed.tm_mday:02d}"
+            except ValueError:
+                continue
+        return None
 
     def _dismiss_release_announcement(self, page: Page) -> bool:
         card = page.locator("aside[data-test-id='release-announcement-card']")

@@ -110,6 +110,33 @@ class OwnershipRegistry:
     def list_pending_creates(self) -> list[dict]:
         return self._load_pending()["events"]
 
+    def get_pending_create(self, ownership_token: str) -> dict:
+        if not ownership_token.startswith(POC_TOKEN_PREFIX):
+            raise OwnershipError("Pending ownership token must use the PoC HSP- prefix.")
+        matches = [
+            item
+            for item in self._load_pending()["events"]
+            if item.get("ownership_token") == ownership_token
+        ]
+        if len(matches) != 1:
+            raise OwnershipError(
+                f"Expected exactly one pending create with ownership token {ownership_token!r}; "
+                f"found {len(matches)}."
+            )
+        record = dict(matches[0])
+        title = record.get("title")
+        if not isinstance(title, str) or not title.startswith(f"{POC_TITLE_PREFIX} "):
+            raise OwnershipError("Pending title is missing the PoC prefix.")
+        if f"[{ownership_token}]" not in title:
+            raise OwnershipError("Pending title does not contain the exact ownership token.")
+        try:
+            date.fromisoformat(str(record.get("event_date", "")))
+        except ValueError as exc:
+            raise OwnershipError("Pending event date is invalid.") from exc
+        if not isinstance(record.get("calendar_name"), str) or not record["calendar_name"]:
+            raise OwnershipError("Pending calendar name is invalid.")
+        return record
+
     def record_pending_create(self, *, spec: TestEventSpec, calendar_name: str) -> None:
         payload = self._load_pending()
         payload["events"] = [
@@ -174,6 +201,76 @@ class OwnershipRegistry:
         ]
         self._save_pending(payload)
         return result
+
+    def promote_pending_create(
+        self,
+        ownership_token: str,
+        *,
+        event_url: str,
+    ) -> OwnedEventRecord:
+        pending = self.get_pending_create(ownership_token)
+        event_id = assert_safe_event_url(event_url)
+        owned_payload = self._load()
+        pending_payload = self._load_pending()
+        pending_matches = [
+            item
+            for item in pending_payload["events"]
+            if item.get("ownership_token") == ownership_token
+        ]
+        if len(pending_matches) != 1 or pending_matches[0] != pending:
+            raise OwnershipError("Pending create changed during reconciliation; refusing promotion.")
+
+        existing_token_records = [
+            OwnedEventRecord.from_dict(item)
+            for item in owned_payload["events"]
+            if item.get("ownership_token") == ownership_token
+        ]
+        if len(existing_token_records) > 1:
+            raise OwnershipError("Multiple owned records already use the pending ownership token.")
+        if existing_token_records:
+            record = existing_token_records[0]
+            if (
+                record.status != "active"
+                or record.event_id != event_id
+                or record.current_title != pending["title"]
+                or record.calendar_name != pending["calendar_name"]
+                or record.event_date != pending["event_date"]
+            ):
+                raise OwnershipError("Existing owned record does not exactly match the pending event.")
+        else:
+            if any(item.get("event_id") == event_id for item in owned_payload["events"]):
+                raise OwnershipError("The reconciled event ID is already owned by another record.")
+            now = utc_now_iso()
+            record = OwnedEventRecord(
+                record_id=str(uuid.uuid4()),
+                ownership_token=ownership_token,
+                calendar_name=pending["calendar_name"],
+                current_title=pending["title"],
+                event_date=pending["event_date"],
+                event_url=event_url,
+                event_id=event_id,
+                created_at=now,
+                updated_at=now,
+            )
+            assert_record_owned(record)
+            owned_payload["events"].append(record.to_dict())
+
+        next_pending_payload = {
+            **pending_payload,
+            "events": [
+                item
+                for item in pending_payload["events"]
+                if item.get("ownership_token") != ownership_token
+            ],
+        }
+        original_owned_payload = self._load()
+        self._save(owned_payload)
+        try:
+            self._save_pending(next_pending_payload)
+        except Exception:
+            self._save(original_owned_payload)
+            raise
+        return record
 
     def get(self, record_id: str | None = None) -> OwnedEventRecord:
         records = self.list(active_only=True)

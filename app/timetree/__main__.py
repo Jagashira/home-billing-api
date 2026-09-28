@@ -66,6 +66,16 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Actually update only the local pending ledger; default is dry-run",
     )
+    reconcile = commands.add_parser(
+        "reconcile-pending",
+        help="Verify one existing TimeTree event and promote its exact pending-create record",
+    )
+    reconcile.add_argument("--ownership-token", required=True)
+    reconcile.add_argument(
+        "--apply",
+        action="store_true",
+        help="Promote the verified pending record locally; default is dry-run",
+    )
     return parser
 
 
@@ -134,6 +144,13 @@ def main(argv: list[str] | None = None) -> int:
                     "owned_events": client.registry.list(),
                     "pending_creates": client.registry.list_pending_creates(),
                 }
+            )
+        elif args.command == "reconcile-pending":
+            _print(
+                client.reconcile_pending_create(
+                    ownership_token=args.ownership_token,
+                    dry_run=not args.apply,
+                )
             )
         elif args.command == "create-test":
             event_date = _parse_create_date(args.date)

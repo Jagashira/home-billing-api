@@ -145,6 +145,11 @@ class ActionLocator:
     def nth(self, index: int) -> ActionCandidate:
         return self._candidates[index]
 
+    def fill(self, value: str) -> None:
+        if len(self._candidates) != 1:
+            raise PlaywrightTimeoutError("strict locator did not resolve exactly once")
+        self._candidates[0].fill(value)
+
 
 class CreateFormPage:
     def __init__(self, create_control_count: int) -> None:
@@ -362,12 +367,22 @@ class OverlayElement:
         visible: bool = True,
         href: str | None = None,
         on_click=None,
+        in_monthly: bool = False,
+        in_detail: bool = False,
+        in_search: bool = False,
+        is_detail_title: bool = False,
     ) -> None:
         self.visible = visible
         self.href = href
         self.on_click = on_click
         self.click_count = 0
         self.wait_states: list[str] = []
+        self.representation = {
+            "inMonthlyCalendar": in_monthly,
+            "inEventDetail": in_detail,
+            "inSearchField": in_search,
+            "isDetailTitle": is_detail_title,
+        }
 
     def is_visible(self) -> bool:
         return self.visible
@@ -384,6 +399,9 @@ class OverlayElement:
     def get_attribute(self, name: str) -> str | None:
         return self.href if name == "href" else None
 
+    def evaluate(self, expression: str):
+        return self.href
+
 
 class OverlayLocator:
     def __init__(self, elements: list[OverlayElement]) -> None:
@@ -394,6 +412,9 @@ class OverlayLocator:
 
     def nth(self, index: int) -> OverlayElement:
         return self.elements[index]
+
+    def evaluate_all(self, expression: str):
+        return [element.representation for element in self.elements if element.visible]
 
 
 class AnnouncementPage:
@@ -431,6 +452,59 @@ class AnnouncementPage:
 
     def wait_for_timeout(self, milliseconds: int) -> None:
         return None
+
+    def wait_for_function(self, expression: str, *, arg, timeout: int, polling: int) -> None:
+        return None
+
+
+class SearchCalendarLocator:
+    def __init__(self, results: list[OverlayElement]) -> None:
+        self.results = results
+
+    def get_by_text(self, text: str, *, exact: bool) -> OverlayLocator:
+        assert exact is True
+        return OverlayLocator(self.results)
+
+
+class EventSearchPage:
+    def __init__(self, result_count: int = 1, *, wait_error: bool = False) -> None:
+        self.search_control = FormControl()
+        self.search_input = FormControl()
+        self.results = [OverlayElement(in_monthly=True) for _ in range(result_count)]
+        self.wait_error = wait_error
+        self.wait_calls: list[dict] = []
+
+    def locator(self, selector: str):
+        if selector == "[data-test-id='search-field'][role='button']":
+            return ActionLocator([self.search_control])
+        if selector == "input[name='search-field'][placeholder='Enter keywords to search']":
+            return ActionLocator([self.search_input])
+        if selector == "[data-test-id='monthly-calendar']":
+            return SearchCalendarLocator(self.results)
+        return ActionLocator([])
+
+    def wait_for_function(self, expression: str, **kwargs) -> None:
+        self.wait_calls.append({"expression": expression, **kwargs})
+        if self.wait_error:
+            raise PlaywrightTimeoutError("search timeout")
+
+
+class TextLocator:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def inner_text(self) -> str:
+        return self.value
+
+
+class ReconcilePage:
+    def __init__(self, url: str, body_text: str) -> None:
+        self.url = url
+        self.body_text = body_text
+
+    def locator(self, selector: str) -> TextLocator:
+        assert selector == "body"
+        return TextLocator(self.body_text)
 
 
 def test_authenticated_entry_url_uses_observed_private_route(tmp_path) -> None:
@@ -984,6 +1058,89 @@ def test_update_apply_preserves_prefix_and_token_and_clicks_save_once(
     assert updated.status == "active"
 
 
+def _configured_reconcile_client(tmp_path, monkeypatch, *, observed_date="2026-09-29"):
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    spec = build_test_event(date(2026, 9, 29))
+    client.registry.record_pending_create(spec=spec, calendar_name="Partner")
+    event_url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
+    page = ReconcilePage(event_url, f"{spec.title}\n{spec.ownership_token}")
+
+    @contextmanager
+    def fake_session(*args, **kwargs):
+        yield page, object()
+
+    client._session = fake_session  # type: ignore[method-assign]
+    client._open_authenticated_home = lambda observed: None  # type: ignore[method-assign]
+    client._resolve_calendar = lambda observed, name: CalendarInfo(  # type: ignore[method-assign]
+        name="Partner",
+        url="https://timetreeapp.com/calendars/calendar-1",
+    )
+    client._open_calendar = lambda observed, calendar: None  # type: ignore[method-assign]
+    client._search_exact_title_event_url = lambda observed, title: event_url  # type: ignore[method-assign]
+    client._wait_for_event_detail_title = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    client._event_detail_start_date = lambda observed: observed_date  # type: ignore[method-assign]
+    for forbidden in ("_open_create_form", "_save_prepared_event", "_open_event_action"):
+        monkeypatch.setattr(
+            client,
+            forbidden,
+            lambda *args, **kwargs: pytest.fail("reconciliation must not mutate TimeTree"),
+        )
+    return client, spec
+
+
+def test_reconcile_pending_dry_run_makes_no_ledger_or_timetree_write(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    client, spec = _configured_reconcile_client(tmp_path, monkeypatch)
+
+    result = client.reconcile_pending_create(
+        ownership_token=spec.ownership_token,
+        dry_run=True,
+    )
+
+    assert result["dry_run"] is True
+    assert client.registry.list() == []
+    assert len(client.registry.list_pending_creates()) == 1
+
+
+def test_reconcile_pending_apply_promotes_owned_and_clears_pending(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    client, spec = _configured_reconcile_client(tmp_path, monkeypatch)
+
+    record = client.reconcile_pending_create(
+        ownership_token=spec.ownership_token,
+        dry_run=False,
+    )
+
+    assert record.current_title == spec.title
+    assert record.ownership_token == spec.ownership_token
+    assert len(client.registry.list()) == 1
+    assert client.registry.list_pending_creates() == []
+
+
+def test_reconcile_pending_date_mismatch_fails_and_keeps_pending(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    client, spec = _configured_reconcile_client(
+        tmp_path,
+        monkeypatch,
+        observed_date="2026-09-30",
+    )
+
+    with pytest.raises(OwnershipError, match="date does not exactly match"):
+        client.reconcile_pending_create(
+            ownership_token=spec.ownership_token,
+            dry_run=False,
+        )
+
+    assert client.registry.list() == []
+    assert len(client.registry.list_pending_creates()) == 1
+
+
 def test_empty_calendar_url_keeps_matching_current_calendar_open(tmp_path) -> None:
     client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
     page = CalendarIdentityPage(
@@ -1300,14 +1457,18 @@ def test_created_event_title_resolution_uses_exact_title_after_announcement(tmp_
 
     def open_event() -> None:
         page.url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
+        page.title_elements = [
+            title,
+            OverlayElement(in_detail=True, is_detail_title=True),
+        ]
 
-    title = OverlayElement(on_click=open_event)
+    title = OverlayElement(on_click=open_event, in_monthly=True)
     page.title_elements = [title]
 
     resolved = client._resolve_created_event_url(page, spec)
 
     assert resolved.endswith("/events/event-123")
-    assert page.title_queries == [(spec.title, True)]
+    assert page.title_queries == [(spec.title, True), (spec.title, True)]
     assert title.click_count == 1
 
 
@@ -1322,6 +1483,121 @@ def test_missing_exact_title_after_announcement_fails_closed(tmp_path) -> None:
 
     assert close.click_count == 1
     assert page.title_queries == [(spec.title, True)]
+
+
+def test_exact_title_one_element_with_one_event_url_resolves(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    page = AnnouncementPage(
+        title_elements=[
+            OverlayElement(
+                href="https://timetreeapp.com/calendars/calendar-1/events/event-123",
+                in_detail=True,
+                is_detail_title=True,
+            )
+        ]
+    )
+    page.url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
+
+    resolved = client._resolve_exact_title_event_url(page, "Owned title")
+
+    assert resolved.endswith("/events/event-123")
+
+
+def test_multiple_exact_title_representations_same_current_event_resolve(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    page = AnnouncementPage(
+        title_elements=[
+            OverlayElement(in_monthly=True),
+            OverlayElement(in_detail=True, is_detail_title=True),
+        ]
+    )
+    page.url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
+
+    assert client._resolve_exact_title_event_url(page, "Owned title") == page.url
+    assert all(element.click_count == 0 for element in page.title_elements)
+
+
+def test_search_monthly_and_detail_representations_same_event_resolve(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    page = AnnouncementPage(
+        title_elements=[
+            OverlayElement(in_search=True),
+            OverlayElement(in_monthly=True),
+            OverlayElement(in_detail=True, is_detail_title=True),
+        ]
+    )
+    page.url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
+
+    assert client._current_exact_title_event_url(page, "Owned title") == page.url
+
+
+def test_multiple_search_representations_do_not_resolve(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    page = AnnouncementPage(
+        title_elements=[
+            OverlayElement(in_search=True),
+            OverlayElement(in_search=True),
+            OverlayElement(in_monthly=True),
+            OverlayElement(in_detail=True, is_detail_title=True),
+        ]
+    )
+    page.url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
+
+    assert client._current_exact_title_event_url(page, "Owned title") is None
+
+
+def test_multiple_exact_title_event_urls_fail_closed(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    page = AnnouncementPage(
+        title_elements=[
+            OverlayElement(
+                href="https://timetreeapp.com/calendars/calendar-1/events/event-1"
+            ),
+            OverlayElement(
+                href="https://timetreeapp.com/calendars/calendar-1/events/event-2"
+            ),
+        ]
+    )
+    page.url = "https://timetreeapp.com/calendars/calendar-1"
+
+    with pytest.raises(OwnershipError, match="multiple event URLs"):
+        client._resolve_exact_title_event_url(page, "Owned title")
+
+
+def test_reconciliation_search_uses_exact_unique_monthly_result(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    page = EventSearchPage()
+    event_url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
+    client._wait_for_exact_title_event_url = (  # type: ignore[method-assign]
+        lambda observed, title: event_url
+    )
+
+    resolved = client._search_exact_title_event_url(page, "Exact owned title")
+
+    assert resolved == event_url
+    assert page.search_control.clicked is True
+    assert page.search_input.value == "Exact owned title"
+    assert page.results[0].click_count == 1
+
+
+def test_reconciliation_search_multiple_exact_results_fails_closed(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    page = EventSearchPage(result_count=2)
+
+    with pytest.raises(OwnershipError, match="found 2"):
+        client._search_exact_title_event_url(page, "Exact owned title")
+
+    assert all(result.click_count == 0 for result in page.results)
+
+
+def test_reconciliation_search_timeout_fails_closed(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    page = EventSearchPage(wait_error=True)
+
+    with pytest.raises(OwnershipError, match="search input did not become uniquely visible"):
+        client._search_exact_title_event_url(page, "Exact owned title")
+
+    assert all(result.click_count == 0 for result in page.results)
 
 
 def test_post_save_resolution_failure_does_not_retry_create_and_keeps_pending(

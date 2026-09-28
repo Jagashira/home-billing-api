@@ -71,6 +71,64 @@ def _record_pending(registry: OwnershipRegistry, token: str, title: str) -> None
     registry.pending_path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def test_pending_lookup_requires_exactly_one_record(tmp_path) -> None:
+    registry = OwnershipRegistry(tmp_path / "owned-events.json")
+    token = "HSP-11111111-1111-1111-1111-111111111111"
+
+    with pytest.raises(OwnershipError, match="found 0"):
+        registry.get_pending_create(token)
+
+    _record_pending(registry, token, f"[HOME-SERVER-POC] Test [{token}]")
+    payload = json.loads(registry.pending_path.read_text(encoding="utf-8"))
+    payload["events"].append(dict(payload["events"][0]))
+    registry.pending_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(OwnershipError, match="found 2"):
+        registry.get_pending_create(token)
+
+
+def test_pending_lookup_rejects_title_with_different_token(tmp_path) -> None:
+    registry = OwnershipRegistry(tmp_path / "owned-events.json")
+    token = "HSP-11111111-1111-1111-1111-111111111111"
+    other = "HSP-22222222-2222-2222-2222-222222222222"
+    _record_pending(registry, token, f"[HOME-SERVER-POC] Test [{other}]")
+
+    with pytest.raises(OwnershipError, match="exact ownership token"):
+        registry.get_pending_create(token)
+
+
+def test_pending_promotion_is_atomic_and_clears_only_verified_pending(tmp_path) -> None:
+    registry = OwnershipRegistry(tmp_path / "owned-events.json")
+    spec = build_test_event(date(2026, 9, 29))
+    registry.record_pending_create(spec=spec, calendar_name="Partner")
+
+    record = registry.promote_pending_create(spec.ownership_token, event_url=EVENT_URL)
+
+    assert record.current_title == spec.title
+    assert registry.list() == [record]
+    assert registry.list_pending_creates() == []
+
+
+def test_pending_promotion_failure_rolls_back_owned_and_keeps_pending(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    registry = OwnershipRegistry(tmp_path / "owned-events.json")
+    spec = build_test_event(date(2026, 9, 29))
+    registry.record_pending_create(spec=spec, calendar_name="Partner")
+    monkeypatch.setattr(
+        registry,
+        "_save_pending",
+        lambda payload: (_ for _ in ()).throw(OSError("simulated pending write failure")),
+    )
+
+    with pytest.raises(OSError, match="simulated"):
+        registry.promote_pending_create(spec.ownership_token, event_url=EVENT_URL)
+
+    assert registry.list() == []
+    assert len(registry.list_pending_creates()) == 1
+
+
 def test_pending_cleanup_dry_run_does_not_change_file(tmp_path) -> None:
     registry = OwnershipRegistry(tmp_path / "owned-events.json")
     token = "HSP-11111111-1111-1111-1111-111111111111"
