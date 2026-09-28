@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from app.timetree.selectors import SelectorNotFound, first_visible, unique_visible
+from app.timetree.selectors import (
+    CALENDAR_LIST_NAMES,
+    CREATE_EVENT_NAMES,
+    SHOW_ONLY_CALENDAR_NAMES,
+    SelectorNotFound,
+    first_visible,
+    unique_visible,
+)
 
 
 class FakeCandidate:
@@ -39,3 +46,9 @@ def test_unique_visible_accepts_one_semantic_match() -> None:
 def test_unique_visible_refuses_ambiguous_mutation_target() -> None:
     with pytest.raises(SelectorNotFound, match="Refusing safe action"):
         unique_visible((FakeLocator(True), FakeLocator(True)), "safe action")
+
+
+def test_calendar_selectors_match_observed_authenticated_dom() -> None:
+    assert "Expand" in CALENDAR_LIST_NAMES
+    assert SHOW_ONLY_CALENDAR_NAMES == ("Show only this calendar",)
+    assert CREATE_EVENT_NAMES[0] == "Create an event"

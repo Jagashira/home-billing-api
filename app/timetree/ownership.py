@@ -134,6 +134,47 @@ class OwnershipRegistry:
         ]
         self._save_pending(payload)
 
+    def cleanup_pending_create(
+        self,
+        ownership_token: str,
+        *,
+        dry_run: bool = True,
+    ) -> dict:
+        if not ownership_token.startswith(POC_TOKEN_PREFIX):
+            raise OwnershipError("Pending ownership token must use the PoC HSP- prefix.")
+        payload = self._load_pending()
+        matches = [
+            item
+            for item in payload["events"]
+            if item.get("ownership_token") == ownership_token
+        ]
+        if len(matches) != 1:
+            raise OwnershipError(
+                f"Expected exactly one pending create with ownership token {ownership_token!r}; "
+                f"found {len(matches)}."
+            )
+        record = matches[0]
+        count_before = len(payload["events"])
+        result = {
+            "dry_run": dry_run,
+            "ownership_token": ownership_token,
+            "title": record.get("title"),
+            "event_date": record.get("event_date"),
+            "current_status": record.get("status"),
+            "action": "remove_pending_ledger_record",
+            "pending_count_before": count_before,
+            "pending_count_after": count_before - 1,
+        }
+        if dry_run:
+            return result
+        payload["events"] = [
+            item
+            for item in payload["events"]
+            if item.get("ownership_token") != ownership_token
+        ]
+        self._save_pending(payload)
+        return result
+
     def get(self, record_id: str | None = None) -> OwnedEventRecord:
         records = self.list(active_only=True)
         if record_id:

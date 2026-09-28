@@ -4,7 +4,7 @@
 
 このPoCは、既存の `api` コンテナに含まれる Playwright / Chromium を再利用し、TimeTree Webをブラウザとして操作できるかを確認するためのものです。Google Calendar連携、同期DB、定期実行、双方向同期は含みません。TimeTreeの非公開APIも使用しません。
 
-2026-09-23時点で、公式Web版URL `https://timetreeapp.com/signin` がChromiumで開けることと、公開ログイン画面のアクセシブル名 `Email Address`、`Password`、`Sign in` を確認しています。公開ページが配信する画面ルート定義では、予定詳細URLは `/calendars/:aliasCode/events/:eventId` です。所有台帳はこの形のHTTPS URLだけを受理します。ログイン後のカレンダー／予定画面は実アカウントなしでは確認していません。したがって、初回の実機検証では `probe` の出力を確認してから `--apply` を使ってください。DOMが現在の候補と異なる場合、PoCはスクリーンショットを保存して失敗し、成功扱いにはしません。
+2026-09-27時点で、公式Web版URL `https://timetreeapp.com/signin` がChromiumで開けること、認証済みカレンダー画面、カレンダー一覧、新規予定フォームを実アカウントで読み取り専用確認しています。予定詳細URLは `/calendars/:aliasCode/events/:eventId` で、所有台帳はこの形のHTTPS URLだけを受理します。実イベントの保存・更新・削除はまだ実行していません。DOMが確認済みの形と異なる場合、PoCはスクリーンショットを保存して失敗し、成功扱いにはしません。
 
 ## リポジトリ調査結果
 
@@ -64,6 +64,20 @@ python -m app.timetree --data-dir ./timetree-local login
 
 Chromiumでログインが完了すると `timetree-local/auth/storage-state.json` と `session.json` が作られます。後者には初回ログインで実在を確認した認証済みURLを保存し、再起動後の認証確認開始点に使います。ブラウザのパスワード保存は使わず、認証操作は人間が行います。
 
+ログイン待機にはPythonの`time.sleep()`を使わず、Playwright自身の短い待機を使います。これにより、人間の操作中もPlaywrightのnavigation、popup、新規tab、page closeイベントが処理され、`context.pages`と各`Page.url`が更新されます。認証済みpageは同じBrowserContext内の全pageから探します。`/signin`、`/intl/ja`、外部origin、認証済み根拠のない公開ページは成功扱いにしません。`/calendars/<id>`等のアプリrouteでもログインフォームが見えている場合は拒否します。
+
+`--debug`では、Cookie、localStorage、フォーム内容を出力せず、page数、query/fragmentを除いた各page URL、認証判定理由、page open/navigation/closeをログへ記録します。ログインが完了しない場合は、まず次を確認してください。
+
+```bash
+tail -f timetree-local/logs/timetree.log
+```
+
+TimeTreeは`domcontentloaded`後も`#react-root`内に`.loading`を表示し、React UIを遅れて描画します。認証済みrouteへの移動では、実artifactで確認したこのloading表示が消え、アプリshell内にlink、button、input等の操作要素が出るまで`TIMETREE_TIMEOUT_MS`内で待ちます。`networkidle`や長い固定sleepには依存しません。timeout時は空のprobeを成功扱いにせず、診断値と失敗artifactを保存します。
+
+アプリshellが操作可能になった後も、Calendar Listの行は遅れて描画される場合があります。対象名が最初の読取りで見つからない場合は、確認済みのcanonical calendar linkまたは「Show only this calendar」を持つsemantic rowに完全一致名が現れるまでbounded waitし、DOMを再読取りします。対象が0件のまま、同名が複数、または別カレンダーの現在URLしか確認できない場合は拒否します。対象名を一意に検出した後は、`/calendars/<id>`上でタイトルとURLの組み合わせが一致するまで既存のbounded waitを使い、そのURLを`CalendarInfo`へ保存します。URLが取得できず、現在ページも対象と確認できない場合は見出しをクリックしません。
+
+debugログの`TIMETREE_PAGE_DIAGNOSTICS`には、`document.readyState`、query/fragmentを除いたURL、操作要素数、body textの文字数、calendar link候補数、page titleだけを記録します。body textや予定名そのものはログへ出しません。probeのprivate artifactには各操作要素のrole、accessible name相当の属性、可視状態を保存します。
+
 次に、MacからHome Serverへ転送します。サーバー上の実配置が `/home/home-server/home-platform` の場合は次のとおりです。
 
 ```bash
@@ -85,9 +99,12 @@ docker compose exec api python -m app.timetree status
 docker compose exec api python -m app.timetree calendars
 docker compose exec api python -m app.timetree --debug probe
 docker compose exec api python -m app.timetree --debug probe --surface create
+docker compose exec api python -m app.timetree --debug probe --surface create-filled --date 2026-09-28
 ```
 
-`status` が `authenticated: true`、`calendars` に設定した共有カレンダーが完全一致で1件だけ表示されることを確認します。認証判定はfail-closedで、ログイン欄が見えないだけでは成功にせず、カレンダーアプリのURLまたはカレンダーリンクが実在することを要求します。`probe` は現在画面のスクリーンショットと、操作可能要素のrole、accessible name相当の属性、リンクを保存します。`--surface create` は対象カレンダーの新規予定フォームを開きますが、入力も保存も行いません。個人の予定名を含む可能性があるので外部共有しないでください。
+`status` が `authenticated: true`、`calendars` に設定した共有カレンダーが完全一致で1件だけ表示されることを確認します。認証判定はfail-closedで、ログイン欄が見えないだけでは成功にせず、カレンダーアプリのURLまたはカレンダーリンクが実在することを要求します。`probe` は現在画面のスクリーンショットと、操作可能要素のrole、accessible name相当の属性、リンクを保存します。`--surface create` は対象カレンダーの新規予定フォームを開きますが、入力も保存も行いません。
+
+`--surface create-filled`は、PoCタイトル、指定日、19:00–20:00、所有確認用Noteを通常のPlaywright操作で入力し、各値、`aria-invalid`、validation message、Saveのenabled状態を読み戻します。Noteモーダルの`OK`は押しますが、予定フォームのSaveは絶対に押しません。日付はTimeTreeが受理する表示形式で入力し、読み戻した値をdate-onlyのISO形式へ正規化して照合します。個人の予定名を含む可能性があるのでartifactは外部共有しないでください。
 
 ### 1. dry-run
 
@@ -120,6 +137,12 @@ docker compose exec api python -m app.timetree --debug probe --surface owned --r
 
 保存ボタンを押す直前に、タイトル、所有トークン、日付、カレンダー名を `pending-creates.json` へ記録します。保存後、TimeTreeの確認済み予定詳細URL形式、完全一致タイトル、所有トークンを確認できた場合だけ `owned-events.json` に移して成功とします。クエリ文字列や似たパスからイベントIDを推測しません。イベントID付きURLを取得できない場合は成功扱いにせず、pending情報とエラー成果物を残すため、人間がTimeTree画面上の完全一致トークンを確認できます。
 
+保存後のURL解決時にTimeTreeのrelease announcement cardが表示されている場合は、そのcard内にある専用の `data-test-id="release-announcement-card--close"` が一意であることを確認して1回だけ閉じます。汎用のClose、複数候補、可視状態が矛盾する候補は操作しません。URL解決に失敗してもCREATEを再実行せず、pending情報を残します。
+
+UPDATE/DELETEの所有確認では、event detail routeのアプリshellだけで判定を始めません。実DOMで確認した `h1[data-test-id="event-title"]` が可視かつ一意で、保存済みPoC titleと完全一致するまでbounded waitします。その後もevent ID、完全一致title、ownership tokenを既存のownership検証で再確認します。部分一致やtoken単独では通過しません。
+
+UPDATEのEdit画面では、CREATEと同じ `textarea[name="title"][placeholder="Event title (required)"]` が可視かつ一意になり、現在値が台帳の保存済みtitleと完全一致するまでbounded waitします。別のinputや汎用textareaへfallbackしません。新しいtitleを入力した後もPoC prefixとownership tokenを含む完全な値を再確認してから、Saveを1回だけ押します。
+
 ### 3. 更新
 
 まずdry-run、次に `--apply` の順で実行します。activeレコードが複数ある場合は `records` で確認した `--record-id` が必須です。
@@ -146,6 +169,25 @@ docker compose exec api python -m app.timetree delete-test --record-id RECORD_ID
 docker compose exec api python -m app.timetree cleanup-test
 docker compose exec api python -m app.timetree cleanup-test --limit 10 --apply
 ```
+
+### Pending create台帳だけを整理する
+
+Save失敗後に残ったpending recordは、TimeTreeへアクセスしない専用コマンドで1件ずつ整理します。`cleanup-test`とは別機能で、完全一致するownership tokenがちょうど1件の場合だけ対象になります。既定はdry-runです。
+
+```bash
+python -m app.timetree --data-dir ./timetree-local pending-cleanup \
+  --ownership-token HSP-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+TimeTree上に同じtokenのイベントが存在しないことを人間が確認した後だけ、`--apply`を付けます。
+
+```bash
+python -m app.timetree --data-dir ./timetree-local pending-cleanup \
+  --ownership-token HSP-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+  --apply
+```
+
+このコマンドはブラウザとPlaywrightを起動せず、`pending-creates.json`だけをatomic replaceで更新します。`owned-events.json`、storage state、session、TimeTree上の予定には触れません。tokenが0件または重複している場合は変更せず失敗します。
 
 ## ログ、スクリーンショット、HTML、trace
 
@@ -193,7 +235,7 @@ HTML、trace、スクリーンショットにはカレンダー内容が含ま�
 3. 安定したinput属性
 4. 短いCSS fallback
 
-`nth-child()`、複雑なCSS階層、画面座標は使いません。ログイン画面以外の候補は、実アカウントで未検証です。初回の `probe`、`probe --surface create`、作成後の `probe --surface owned` が出力する `interactive-elements.json` で実在を確認し、必要なら `app/timetree/selectors.py` の小さな候補一覧だけを更新してください。存在しないselectorのまま成功にはなりません。
+`nth-child()`、複雑なCSS階層、画面座標は使いません。実DOMでは作成ボタンが `button` / `aria-label="Create an event"`、作成フォームのタイトルが `textarea[name="title"]`、保存がアクセシブル名 `Save`、閉じる操作が `Close`、終日切替が `role="switch"` / `data-test-id="allday-checkbox"` でした。開始日・終了日はそれぞれ `dateTime.startDate` / `dateTime.endDate`、時刻入力は終日を解除した場合に `dateTime.startTime` / `dateTime.endTime` として現れます。詳細欄は `Note` を開いた後の専用textareaです。変更操作では、確認済みのrole・accessible name・安定属性を使い、可視候補が複数なら拒否します。
 
 ## ロールバック
 
@@ -209,8 +251,11 @@ DB migration、API route、dashboard変更、新サービスはありません�
 - `docker compose config --quiet`: 成功
 - Playwright 1.46 + Chromium 128で `https://timetreeapp.com` を開く: 成功
 - storage stateがない状態を `TIMETREE_AUTH_REQUIRED` / 終了コード2として判定: 成功
+- 修正後のheadless smoke testで公開URLが`/intl/ja`へ遷移し、認証情報なしでは`authenticated: false`になることを再確認
 - 未認証エラー時の `error.json`、PNG screenshot、debug HTML、Playwright trace保存: 成功
-- 変更系selectorが複数の可視要素へ一致した場合の拒否、実際に観測した認証済みURLの永続化、予定詳細URLの厳格な検証を含め、PoC単体テストは合計13件成功
-- API全テスト: 27件成功、11件失敗。変更前の `HEAD` では14件成功、同じ11件が失敗したため、このPoCによる新規失敗はありません。既存失敗はインメモリSQLiteの別connectionでtableが見えない問題10件とHEPCO parserの既存期待値差1件です。
+- 変更系selectorが複数の可視要素へ一致した場合の拒否、Calendar List・event detail title・Edit formの遅延描画待機、実際に観測した認証済みURLの永続化、予定詳細URLの厳格な検証、date-only処理、Save事前検証、release announcementの限定的なdismiss、pending台帳のatomic cleanupを含め、PoC単体テストは合計81件成功
+- `/signin`と`/intl/ja`の拒否、`/calendars/<id>`の認識、公開ページのfail-closed、複数page、新規tab、storage state/session保存、timeout時に認証ファイルを作らないことを回帰テストで確認
+- 認証済みrouteでReact loading終了と操作要素をbounded waitすること、公開routeではapp shellを待たないこと、debug診断に件数だけを含めることを回帰テストで確認
+- API全テスト: 35件成功、11件失敗。既存のTimeTree PoC文書に記録済みの同じ11件が失敗しており、今回の変更による新規失敗はありません。既存失敗はインメモリSQLiteの別connectionでtableが見えない問題10件とHEPCO parserの既存期待値差1件です。
 
-このMacではDockerデーモンが停止していたため、`api` コンテナ内での実行は未確認です。実アカウントの認証、対象共有カレンダー認識、作成・更新・削除も未実行です。Home Serverで上記の安全な検証順序を人間が実行し、ログイン後DOMを `probe` で確認することが残る完了作業です。
+実アカウントで認証、対象共有カレンダーの一意な認識、対象カレンダーURLの維持、新規予定フォームを保存せず開けることまで確認済みです。作成・更新・削除の実書き込みは0件です。CRUDは各dry-runとprobe結果を確認するまで`--apply`を付けないでください。

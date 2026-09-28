@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import json
 
 import pytest
 
@@ -51,6 +52,146 @@ def test_pending_create_survives_until_stable_record_is_saved(tmp_path) -> None:
     registry.add(spec=spec, calendar_name="Partner", event_url=EVENT_URL)
     registry.clear_pending_create(spec.ownership_token)
     assert registry.list_pending_creates() == []
+
+
+def _record_pending(registry: OwnershipRegistry, token: str, title: str) -> None:
+    payload = {
+        "version": 1,
+        "events": [
+            {
+                "ownership_token": token,
+                "calendar_name": "Partner",
+                "title": title,
+                "event_date": "2026-09-28",
+                "recorded_at": "2026-09-27T00:00:00+00:00",
+                "status": "save-attempted",
+            }
+        ],
+    }
+    registry.pending_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_pending_cleanup_dry_run_does_not_change_file(tmp_path) -> None:
+    registry = OwnershipRegistry(tmp_path / "owned-events.json")
+    token = "HSP-11111111-1111-1111-1111-111111111111"
+    _record_pending(registry, token, f"[HOME-SERVER-POC] Test [{token}]")
+    before = registry.pending_path.read_bytes()
+
+    result = registry.cleanup_pending_create(token, dry_run=True)
+
+    assert result["dry_run"] is True
+    assert result["ownership_token"] == token
+    assert result["title"] == f"[HOME-SERVER-POC] Test [{token}]"
+    assert result["event_date"] == "2026-09-28"
+    assert result["current_status"] == "save-attempted"
+    assert result["action"] == "remove_pending_ledger_record"
+    assert result["pending_count_before"] == 1
+    assert result["pending_count_after"] == 0
+    assert registry.pending_path.read_bytes() == before
+
+
+def test_pending_cleanup_apply_removes_only_exact_token_and_preserves_owned_file(tmp_path) -> None:
+    registry = OwnershipRegistry(tmp_path / "owned-events.json")
+    first = build_test_event(date(2026, 9, 28))
+    second = build_test_event(date(2026, 9, 28))
+    registry.record_pending_create(spec=first, calendar_name="Partner")
+    registry.record_pending_create(spec=second, calendar_name="Partner")
+    owned = registry.add(spec=first, calendar_name="Partner", event_url=EVENT_URL)
+    owned_before = registry.path.read_bytes()
+
+    result = registry.cleanup_pending_create(first.ownership_token, dry_run=False)
+
+    assert result["dry_run"] is False
+    assert result["pending_count_before"] == 2
+    assert result["pending_count_after"] == 1
+    assert [item["ownership_token"] for item in registry.list_pending_creates()] == [
+        second.ownership_token
+    ]
+    assert registry.path.read_bytes() == owned_before
+    assert registry.get(owned.record_id).event_id == owned.event_id
+
+
+def test_pending_cleanup_missing_token_fails_closed_without_write(tmp_path) -> None:
+    registry = OwnershipRegistry(tmp_path / "owned-events.json")
+    existing = build_test_event(date(2026, 9, 28))
+    registry.record_pending_create(spec=existing, calendar_name="Partner")
+    before = registry.pending_path.read_bytes()
+
+    with pytest.raises(OwnershipError, match="found 0"):
+        registry.cleanup_pending_create(
+            "HSP-22222222-2222-2222-2222-222222222222",
+            dry_run=False,
+        )
+
+    assert registry.pending_path.read_bytes() == before
+
+
+def test_pending_cleanup_duplicate_token_fails_closed_without_write(tmp_path) -> None:
+    registry = OwnershipRegistry(tmp_path / "owned-events.json")
+    token = "HSP-33333333-3333-3333-3333-333333333333"
+    _record_pending(registry, token, f"[HOME-SERVER-POC] Test [{token}]")
+    payload = json.loads(registry.pending_path.read_text(encoding="utf-8"))
+    payload["events"].append(dict(payload["events"][0]))
+    registry.pending_path.write_text(json.dumps(payload), encoding="utf-8")
+    before = registry.pending_path.read_bytes()
+
+    with pytest.raises(OwnershipError, match="found 2"):
+        registry.cleanup_pending_create(token, dry_run=False)
+
+    assert registry.pending_path.read_bytes() == before
+
+
+def test_pending_cleanup_apply_uses_atomic_replace(tmp_path, monkeypatch) -> None:
+    registry = OwnershipRegistry(tmp_path / "owned-events.json")
+    token = "HSP-44444444-4444-4444-4444-444444444444"
+    _record_pending(registry, token, f"[HOME-SERVER-POC] Test [{token}]")
+    replacements: list[tuple] = []
+    from app.timetree import ownership as ownership_module
+
+    original_replace = ownership_module.os.replace
+
+    def observed_replace(source, destination) -> None:
+        replacements.append((source, destination))
+        original_replace(source, destination)
+
+    monkeypatch.setattr(ownership_module.os, "replace", observed_replace)
+
+    registry.cleanup_pending_create(token, dry_run=False)
+
+    assert replacements == [(registry.pending_path.with_suffix(".tmp"), registry.pending_path)]
+    assert registry.pending_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_pending_cleanup_cli_does_not_construct_timetree_client_or_playwright(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from app.timetree import __main__ as cli
+
+    registry = OwnershipRegistry(tmp_path / "owned-events.json")
+    token = "HSP-55555555-5555-5555-5555-555555555555"
+    _record_pending(registry, token, f"[HOME-SERVER-POC] Test [{token}]")
+
+    def forbidden_client(*args, **kwargs):
+        raise AssertionError("pending-cleanup must not construct TimeTreeClient")
+
+    monkeypatch.setattr(cli, "TimeTreeClient", forbidden_client)
+
+    exit_code = cli.main(
+        [
+            "--data-dir",
+            str(tmp_path),
+            "pending-cleanup",
+            "--ownership-token",
+            token,
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["dry_run"] is True
+    assert registry.list_pending_creates()[0]["ownership_token"] == token
 
 
 def test_owned_page_requires_url_title_and_token_match(tmp_path) -> None:
