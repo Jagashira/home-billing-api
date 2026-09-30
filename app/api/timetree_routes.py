@@ -6,7 +6,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 
-from app.schemas.timetree import TimeTreeAdapterStatusRead
+from app.schemas.timetree import (
+    TimeTreeAdapterStatusRead,
+    TimeTreeOperationRequest,
+    TimeTreeOperationResponse,
+)
 from app.timetree.production_adapter import TimeTreeProductionAdapter
 
 
@@ -26,6 +30,16 @@ def get_timetree_production_adapter() -> TimeTreeProductionAdapter:
     return TimeTreeProductionAdapter()
 
 
+def require_adapter_write_gate(
+    confirmation: Annotated[str | None, Header(alias="X-TimeTree-Write-Confirmation")] = None,
+) -> None:
+    enabled = os.getenv("TIMETREE_ADAPTER_WRITES_ENABLED", "").strip().lower() == "true"
+    if not enabled:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="TimeTree adapter writes are disabled.")
+    if not hmac.compare_digest(confirmation or "", "WRITE_TIMETREE"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="TimeTree write confirmation is required.")
+
+
 @router.get(
     "/status",
     response_model=TimeTreeAdapterStatusRead,
@@ -35,3 +49,51 @@ def timetree_status(
     adapter: TimeTreeProductionAdapter = Depends(get_timetree_production_adapter),
 ) -> TimeTreeAdapterStatusRead:
     return TimeTreeAdapterStatusRead.model_validate(adapter.status())
+
+
+@router.post(
+    "/events/create",
+    response_model=TimeTreeOperationResponse,
+    dependencies=[Depends(require_internal_token), Depends(require_adapter_write_gate)],
+)
+def timetree_create(
+    request: TimeTreeOperationRequest,
+    adapter: TimeTreeProductionAdapter = Depends(get_timetree_production_adapter),
+) -> TimeTreeOperationResponse:
+    return adapter.create(request)
+
+
+@router.post(
+    "/events/reconcile",
+    response_model=TimeTreeOperationResponse,
+    dependencies=[Depends(require_internal_token)],
+)
+def timetree_reconcile(
+    request: TimeTreeOperationRequest,
+    adapter: TimeTreeProductionAdapter = Depends(get_timetree_production_adapter),
+) -> TimeTreeOperationResponse:
+    return adapter.reconcile(request)
+
+
+@router.post(
+    "/events/update",
+    response_model=TimeTreeOperationResponse,
+    dependencies=[Depends(require_internal_token), Depends(require_adapter_write_gate)],
+)
+def timetree_update(
+    request: TimeTreeOperationRequest,
+    adapter: TimeTreeProductionAdapter = Depends(get_timetree_production_adapter),
+) -> TimeTreeOperationResponse:
+    return adapter.update(request)
+
+
+@router.post(
+    "/events/delete",
+    response_model=TimeTreeOperationResponse,
+    dependencies=[Depends(require_internal_token), Depends(require_adapter_write_gate)],
+)
+def timetree_delete(
+    request: TimeTreeOperationRequest,
+    adapter: TimeTreeProductionAdapter = Depends(get_timetree_production_adapter),
+) -> TimeTreeOperationResponse:
+    return adapter.delete(request)
