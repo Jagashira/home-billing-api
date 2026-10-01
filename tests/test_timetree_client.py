@@ -1562,12 +1562,40 @@ def test_search_monthly_and_detail_representations_same_event_resolve(tmp_path) 
     assert client._current_exact_title_event_url(page, "Owned title") == page.url
 
 
-def test_multiple_search_representations_do_not_resolve(tmp_path) -> None:
+def test_multiple_search_representations_same_event_resolve(tmp_path) -> None:
     client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
     page = AnnouncementPage(
         title_elements=[
             OverlayElement(in_search=True),
             OverlayElement(in_search=True),
+            OverlayElement(in_monthly=True),
+            OverlayElement(in_detail=True, is_detail_title=True),
+        ]
+    )
+    page.url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
+
+    assert client._current_exact_title_event_url(page, "Owned title") == page.url
+
+
+def test_multiple_monthly_representations_do_not_resolve(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    page = AnnouncementPage(
+        title_elements=[
+            OverlayElement(in_monthly=True),
+            OverlayElement(in_monthly=True),
+            OverlayElement(in_detail=True, is_detail_title=True),
+        ]
+    )
+    page.url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
+
+    assert client._current_exact_title_event_url(page, "Owned title") is None
+
+
+def test_unclassified_exact_title_representation_does_not_resolve(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    page = AnnouncementPage(
+        title_elements=[
+            OverlayElement(),
             OverlayElement(in_monthly=True),
             OverlayElement(in_detail=True, is_detail_title=True),
         ]

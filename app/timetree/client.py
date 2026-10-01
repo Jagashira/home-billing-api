@@ -1688,7 +1688,6 @@ class TimeTreeClient:
         if (
             len(detail_titles) != 1
             or len(monthly_titles) > 1
-            or len(search_titles) > 1
             or others
         ):
             return None
