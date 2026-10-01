@@ -1629,18 +1629,26 @@ class TimeTreeClient:
         try:
             page.wait_for_function(
                 """
-                expectedTitle => {
+                () => {
                   const parts = location.pathname.split('/').filter(Boolean);
-                  const detailTitles = Array.from(
-                    document.querySelectorAll("h1[data-test-id='event-title']")
-                  ).filter(element =>
-                    (element.offsetWidth || element.offsetHeight || element.getClientRects().length) &&
-                    element.innerText.trim() === expectedTitle
-                  );
                   return parts.length === 4 && parts[0] === 'calendars' &&
-                    parts[2] === 'events' && Boolean(parts[1]) && Boolean(parts[3]) &&
-                    detailTitles.length === 1;
+                    parts[2] === 'events' && Boolean(parts[1]) && Boolean(parts[3]);
                 }
+                """,
+                timeout=self.config.timeout_ms,
+                polling=100,
+            )
+        except PlaywrightTimeoutError:
+            return None
+        try:
+            page.wait_for_function(
+                """
+                expectedTitle => Array.from(
+                  document.querySelectorAll("h1[data-test-id='event-title']")
+                ).filter(element =>
+                  (element.offsetWidth || element.offsetHeight || element.getClientRects().length) &&
+                  element.innerText.trim() === expectedTitle
+                ).length === 1
                 """,
                 arg=title,
                 timeout=self.config.timeout_ms,

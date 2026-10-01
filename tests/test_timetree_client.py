@@ -453,7 +453,14 @@ class AnnouncementPage:
     def wait_for_timeout(self, milliseconds: int) -> None:
         return None
 
-    def wait_for_function(self, expression: str, *, arg, timeout: int, polling: int) -> None:
+    def wait_for_function(
+        self,
+        expression: str,
+        *,
+        timeout: int,
+        polling: int,
+        arg=None,
+    ) -> None:
         return None
 
 
@@ -487,6 +494,30 @@ class EventSearchPage:
         self.wait_calls.append({"expression": expression, **kwargs})
         if self.wait_error:
             raise PlaywrightTimeoutError("search timeout")
+
+
+class ExactTitleTransitionPage(AnnouncementPage):
+    def __init__(self, initial_url: str, event_url: str) -> None:
+        super().__init__()
+        self.url = initial_url
+        self.event_url = event_url
+        self.wait_for_function_calls: list[dict] = []
+
+    def wait_for_function(
+        self,
+        expression: str,
+        *,
+        timeout: int,
+        polling: int,
+        arg: str | None = None,
+    ) -> None:
+        self.wait_for_function_calls.append(
+            {"expression": expression, "arg": arg, "timeout": timeout, "polling": polling}
+        )
+        if len(self.wait_for_function_calls) == 1:
+            self.url = self.event_url
+            return
+        self.title_elements = [OverlayElement(in_detail=True, is_detail_title=True)]
 
 
 class TextLocator:
@@ -1544,6 +1575,34 @@ def test_multiple_search_representations_do_not_resolve(tmp_path) -> None:
     page.url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
 
     assert client._current_exact_title_event_url(page, "Owned title") is None
+
+
+def test_exact_title_event_url_waits_for_detail_after_direct_event_route(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    event_url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
+    page = ExactTitleTransitionPage(event_url, event_url)
+
+    assert client._wait_for_exact_title_event_url(page, "Owned title") == event_url
+    assert len(page.wait_for_function_calls) == 2
+    assert "location.pathname" in page.wait_for_function_calls[0]["expression"]
+    assert "event-title" not in page.wait_for_function_calls[0]["expression"]
+    assert page.wait_for_function_calls[0]["arg"] is None
+    assert "h1[data-test-id='event-title']" in page.wait_for_function_calls[1]["expression"]
+    assert page.wait_for_function_calls[1]["arg"] == "Owned title"
+
+
+def test_exact_title_event_url_waits_for_detail_after_spa_route_transition(tmp_path) -> None:
+    client = TimeTreeClient(TimeTreeConfig(data_dir=tmp_path, calendar_name="Partner"))
+    event_url = "https://timetreeapp.com/calendars/calendar-1/events/event-123"
+    page = ExactTitleTransitionPage(
+        "https://timetreeapp.com/calendars/calendar-1",
+        event_url,
+    )
+
+    assert client._wait_for_exact_title_event_url(page, "Owned title") == event_url
+    assert len(page.wait_for_function_calls) == 2
+    assert page.url == event_url
+    assert page.title_elements[0].representation["isDetailTitle"] is True
 
 
 def test_multiple_exact_title_event_urls_fail_closed(tmp_path) -> None:
