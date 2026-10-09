@@ -8,7 +8,12 @@ from app.timetree.config import TimeTreeConfig
 from app.timetree.models import CalendarInfo
 from app.timetree.production_adapter import TimeTreeProductionAdapter
 from app.timetree.production_models import BrowserResult, ProductionOperationError, canonical_payload_hash
-from app.timetree.production_browser import SingleWriteAttempt, _description_from_note, _note_for
+from app.timetree.production_browser import (
+    PlaywrightProductionBackend,
+    SingleWriteAttempt,
+    _description_from_note,
+    _note_for,
+)
 from app.timetree.ownership import OwnershipError
 from app.schemas.timetree import TimeTreeEventPayload, TimeTreeOperationRequest
 
@@ -235,3 +240,130 @@ def test_production_note_marker_is_exact_and_write_control_is_clicked_once() -> 
     else:
         raise AssertionError("a second remote write click must be rejected")
     assert control.calls == 1
+
+
+def test_production_open_and_inspect_falls_back_after_detail_render_race() -> None:
+    request = _request()
+    event_url = "https://timetreeapp.com/calendars/example/events/remote-1"
+
+    class Page:
+        url = event_url
+
+    class Client:
+        def __init__(self) -> None:
+            self.wait_calls = 0
+            self.search_calls = 0
+            self.edit_calls = 0
+            self.navigations = []
+
+        def _event_url_belongs_to_calendar(self, url, calendar_url):
+            return True
+
+        def _navigate(self, page, url, operation):
+            self.navigations.append((operation, url))
+            page.url = url
+
+        def _auth_required(self, page):
+            return False
+
+        def _wait_for_event_detail_title(
+            self,
+            page,
+            *,
+            expected_title,
+            expected_event_id,
+        ):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise OwnershipError("simulated detail render race")
+
+        def _search_exact_title_event_url(self, page, title):
+            self.search_calls += 1
+            page.url = event_url
+            return event_url
+
+        def _open_event_action(self, page, names, action):
+            self.edit_calls += 1
+
+    page = Page()
+    client = Client()
+    backend = PlaywrightProductionBackend(client)
+    backend._read_form_payload = lambda page, observed_request: request.payload
+
+    observed_hash = backend._open_and_inspect(
+        page,
+        request,
+        event_url,
+        "remote-1",
+        request.payload,
+    )
+
+    assert observed_hash == canonical_payload_hash(request.payload)
+    assert client.wait_calls == 2
+    assert client.search_calls == 1
+    assert client.edit_calls == 1
+    assert client.navigations == [
+        ("inspect_production_event", event_url),
+        ("inspect_production_event_fallback_calendar", request.calendar.url),
+    ]
+
+
+def test_production_open_and_inspect_fallback_rejects_different_event_id() -> None:
+    request = _request()
+    event_url = "https://timetreeapp.com/calendars/example/events/remote-1"
+    different_url = "https://timetreeapp.com/calendars/example/events/remote-2"
+
+    class Page:
+        url = event_url
+
+    class Client:
+        def __init__(self) -> None:
+            self.wait_calls = 0
+            self.edit_calls = 0
+
+        def _event_url_belongs_to_calendar(self, url, calendar_url):
+            return True
+
+        def _navigate(self, page, url, operation):
+            page.url = url
+
+        def _auth_required(self, page):
+            return False
+
+        def _wait_for_event_detail_title(
+            self,
+            page,
+            *,
+            expected_title,
+            expected_event_id,
+        ):
+            self.wait_calls += 1
+            raise OwnershipError("simulated detail render race")
+
+        def _search_exact_title_event_url(self, page, title):
+            page.url = different_url
+            return different_url
+
+        def _open_event_action(self, page, names, action):
+            self.edit_calls += 1
+
+    page = Page()
+    client = Client()
+    backend = PlaywrightProductionBackend(client)
+
+    try:
+        backend._open_and_inspect(
+            page,
+            request,
+            event_url,
+            "remote-1",
+            request.payload,
+        )
+    except OwnershipError as exc:
+        assert "different event ID" in str(exc)
+    else:
+        raise AssertionError(
+            "fallback to a different event ID must fail closed"
+        )
+
+    assert client.edit_calls == 0

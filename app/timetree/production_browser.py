@@ -222,6 +222,55 @@ class PlaywrightProductionBackend:
             location=location.input_value().strip() or None,
         )
 
+    def _open_verified_event_detail(
+        self,
+        page: Any,
+        request: TimeTreeOperationRequest,
+        event_url: str,
+        event_id: str,
+        expected_title: str,
+        operation: str,
+    ) -> None:
+        self.client._navigate(page, event_url, operation)
+        if self.client._auth_required(page):
+            raise AuthenticationRequired("TimeTree authentication expired.")
+
+        try:
+            self.client._wait_for_event_detail_title(
+                page,
+                expected_title=expected_title,
+                expected_event_id=event_id,
+            )
+            return
+        except OwnershipError:
+            if derive_event_id(page.url) != event_id:
+                raise
+
+        self.client._navigate(
+            page,
+            request.calendar.url,
+            f"{operation}_fallback_calendar",
+        )
+        if self.client._auth_required(page):
+            raise AuthenticationRequired("TimeTree authentication expired.")
+
+        fallback_url = self.client._search_exact_title_event_url(
+            page,
+            expected_title,
+        )
+        fallback_id = derive_event_id(fallback_url)
+
+        if fallback_id != event_id:
+            raise OwnershipError(
+                "Exact-title fallback resolved a different event ID."
+            )
+
+        self.client._wait_for_event_detail_title(
+            page,
+            expected_title=expected_title,
+            expected_event_id=event_id,
+        )
+
     def _open_and_inspect(
         self,
         page: Any,
@@ -234,13 +283,14 @@ class PlaywrightProductionBackend:
             raise OwnershipError("Event URL does not contain the exact expected event ID.")
         if not self.client._event_url_belongs_to_calendar(event_url, request.calendar.url):
             raise OwnershipError("Event URL does not belong to the expected calendar.")
-        self.client._navigate(page, event_url, "inspect_production_event")
-        if self.client._auth_required(page):
-            raise AuthenticationRequired("TimeTree authentication expired.")
-        self.client._wait_for_event_detail_title(
+
+        self._open_verified_event_detail(
             page,
-            expected_title=expected_payload.title,
-            expected_event_id=event_id,
+            request,
+            event_url,
+            event_id,
+            expected_payload.title,
+            "inspect_production_event",
         )
         self.client._open_event_action(page, EDIT_NAMES, "inspect edit")
         observed = self._read_form_payload(page, request)
